@@ -52,6 +52,17 @@ const ICONS = {
   completion: 'M5 21V4M5 4h11l-2 4 2 4H5',
   workflow: 'M5 6h4v4H5zM15 14h4v4h-4zM9 8h4a2 2 0 0 1 2 2v4',
   error: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  home: 'M3 11l9-7 9 7M5 10v10h5v-6h4v6h5V10',
+  folder: 'M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z',
+  team: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14a6.5 6.5 0 0 1 3.5 6',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
+  preview: 'M3 5h18v12H3V5zM8 21h8M12 17v4',
+  repository: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
+  send: 'M5 12h14M13 6l6 6-6 6',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
+  chevron: 'M9 6l6 6-6 6',
+  chat: 'M4 5h16v11H9l-5 4V5zM8 10h8M8 13h5',
+  local: 'M4 5h16v10H4V5zM2 19h20',
 };
 
 export function icon(name) {
@@ -67,6 +78,10 @@ export function icon(name) {
 
 export function time(iso) {
   return iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+}
+
+export function shortTime(iso) {
+  return iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 }
 
 export function dateTime(iso) {

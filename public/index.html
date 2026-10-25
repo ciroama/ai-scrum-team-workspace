@@ -9,81 +9,59 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="header">
-      <div class="brand">
-        <img class="brand-mark" src="/favicon.svg" alt="" width="32" height="32" />
-        <div>
-          <div class="brand-name">AI Scrum Team Workspace</div>
-          <div class="brand-project"><span class="muted">Project:</span> <span id="project-name">No project yet</span></div>
-        </div>
-      </div>
-      <div class="header-meta">
-        <span class="chip chip-local" title="Runs on this computer only. Data is stored in the local data folder."><span class="dot"></span>Local workspace</span>
-        <span id="connection" class="chip chip-connection" data-state="connecting"><span class="dot"></span><span class="label">Connecting…</span></span>
-        <span id="overall-status" class="status-pill" data-status="none">No workflow</span>
-        <button id="new-request" class="btn btn-ghost" type="button">New request</button>
-      </div>
-    </header>
-
-    <div id="global-error" class="global-error" role="alert" hidden></div>
-
-    <main class="layout">
-      <aside class="column column-team">
-        <section class="panel" aria-labelledby="team-heading">
-          <div class="panel-head">
-            <h2 id="team-heading">AI Scrum Team</h2>
-            <span class="badge badge-scripted">Scripted agents</span>
-          </div>
-          <p class="panel-note">
-            In this milestone the agents follow fixed rules and templates written in code. They do not use an AI model
-            and do not reason autonomously. The files they produce, the commands they run and the test results are real.
-          </p>
-          <div id="human-card"></div>
-          <div id="agent-cards" class="agent-cards"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="history-heading">
-          <div class="panel-head"><h2 id="history-heading">Workflow history</h2></div>
-          <ol id="history" class="history"></ol>
-        </section>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="#/">
+          <img class="brand-mark" src="/favicon.svg" alt="" width="40" height="40" />
+          <span>
+            <span class="brand-name">AI Scrum Team</span>
+            <span class="brand-tagline">From requests to verified products</span>
+          </span>
+        </a>
+        <nav id="nav" class="nav" aria-label="Main"></nav>
+        <div id="sidebar-status" class="sidebar-status"></div>
       </aside>
 
-      <div class="column column-main">
-        <section class="panel panel-request" aria-labelledby="request-heading">
-          <h2 id="request-heading" class="request-title">What would you like to build?</h2>
-          <p class="muted">Describe it in your own words. The PO turns your request into requirements and acceptance criteria for the team.</p>
-          <form id="request-form" novalidate>
-            <label class="sr-only" for="request-input">Your requirement</label>
-            <textarea id="request-input" rows="3" maxlength="2000" placeholder="e.g. Build a Hello World application."></textarea>
-            <div class="request-footer">
-              <div id="supported" class="supported"></div>
-              <div class="request-actions">
-                <span id="char-count" class="muted small">0 / 2000</span>
-                <button id="start-button" class="btn btn-primary" type="submit">Start workflow</button>
-              </div>
-            </div>
-            <div id="request-feedback" class="feedback" role="status" aria-live="polite"></div>
-          </form>
+      <header class="topbar">
+        <div id="project-card" class="project-card"></div>
+        <div class="topbar-actions">
+          <span id="elapsed" class="chip chip-timer" title="Elapsed time of the shown workflow" hidden></span>
+          <button id="new-request" class="btn btn-ghost" type="button">New request</button>
+          <div class="user-card" title="You submit requirements and make product decisions">
+            <span class="avatar avatar-user" id="user-avatar"></span>
+            <span>
+              <span class="user-name">You</span>
+              <span class="user-role">Product requester</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div id="global-error" class="global-error" role="alert" hidden></div>
+
+      <main id="view" class="main" tabindex="-1"></main>
+
+      <aside class="rail" aria-label="Team overview">
+        <section class="panel" aria-labelledby="rail-team-heading">
+          <div class="panel-head">
+            <h2 id="rail-team-heading" class="with-icon"><span id="rail-team-icon"></span>AI Scrum Team</h2>
+            <span id="team-summary" class="chip"></span>
+          </div>
+          <p class="panel-note">Scripted agents: fixed rules and templates, no AI model.</p>
+          <ul id="team-rows" class="team-rows"></ul>
         </section>
 
-        <section id="progress" class="panel" aria-label="Workflow progress"></section>
+        <section class="panel" aria-labelledby="rail-activity-heading">
+          <div class="panel-head">
+            <h2 id="rail-activity-heading" class="with-icon"><span id="rail-activity-icon"></span>Team Activity</h2>
+            <a class="chip chip-link" href="#/activity">View all</a>
+          </div>
+          <ol id="activity-compact" class="activity-compact"></ol>
+        </section>
 
-        <div class="split">
-          <section class="panel panel-timeline" aria-labelledby="timeline-heading">
-            <div class="panel-head">
-              <h2 id="timeline-heading">Team activity</h2>
-              <span class="muted small">Recorded as it happens</span>
-            </div>
-            <ol id="timeline" class="timeline"></ol>
-          </section>
-
-          <section class="panel panel-results" aria-labelledby="results-heading">
-            <div class="panel-head"><h2 id="results-heading">Results &amp; repository</h2></div>
-            <div id="results"></div>
-          </section>
-        </div>
-      </div>
-    </main>
+        <section id="preview-slot" class="panel panel-preview" aria-labelledby="preview-heading"></section>
+      </aside>
+    </div>
 
     <script type="module" src="/js/app.js"></script>
   </body>

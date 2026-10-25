@@ -1,6 +1,6 @@
 import { ScriptedAgent } from './agent.js';
 
-export const ACCEPTANCE_TEST_FILE = 'test/acceptance.test.js';
+export const ACCEPTANCE_TEST_FILE = 'test/acceptance.test.mjs';
 
 const js = (value) => JSON.stringify(value);
 
@@ -20,9 +20,20 @@ function testCase(criterion) {
     case 'export':
       return [
         `test(${name}, async () => {`,
-        `  const mod = await import(pathToFileURL(join(root, ${js(check.module)})).href);`,
+        `  const mod = await load(${js(check.module)});`,
         `  assert.equal(typeof mod[${js(check.name)}], 'function', ${js(`${check.module} exports ${check.name}()`)});`,
         `  assert.equal(mod[${js(check.name)}](...${js(check.args)}), ${js(check.expect)});`,
+        '});',
+      ].join('\n');
+    case 'domRender':
+      return [
+        `test(${name}, async () => {`,
+        `  const dependency = await load(${js(check.dependency.module)});`,
+        `  const page = await load(${js(check.script)});`,
+        `  const element = { id: ${js(check.elementId)}, textContent: '' };`,
+        `  const doc = { getElementById: (id) => (id === ${js(check.elementId)} ? element : null) };`,
+        `  page[${js(check.fn)}](doc, dependency[${js(check.dependency.name)}]);`,
+        `  assert.equal(element.textContent, ${js(check.expect)});`,
         '});',
       ].join('\n');
     case 'fileContains':
@@ -30,7 +41,8 @@ function testCase(criterion) {
         `test(${name}, () => {`,
         `  const path = join(root, ${js(check.path)});`,
         `  assert.ok(existsSync(path), ${js(`${check.path} exists`)});`,
-        `  assert.ok(readFileSync(path, 'utf8').includes(${js(check.text)}), ${js(`${check.path} mentions "${check.text}"`)});`,
+        `  const text = readFileSync(path, 'utf8');`,
+        ...check.texts.map((t) => `  assert.ok(text.includes(${js(t)}), ${js(`${check.path} contains ${t}`)});`),
         '});',
       ].join('\n');
     default:
@@ -49,6 +61,11 @@ export function generateAcceptanceTests(criteria) {
     "import { fileURLToPath, pathToFileURL } from 'node:url';",
     '',
     "const root = fileURLToPath(new URL('..', import.meta.url));",
+    '// Loads a product file whether it is an ES module or a CommonJS script.',
+    'const load = async (path) => {',
+    '  const mod = await import(pathToFileURL(join(root, path)).href);',
+    '  return mod.default ?? mod;',
+    '};',
     '',
     criteria.map(testCase).join('\n\n'),
     '',
@@ -60,6 +77,7 @@ function checkedFiles(criterion) {
   const { check } = criterion;
   if (check.type === 'command') return [check.args[0]];
   if (check.type === 'export') return [check.module];
+  if (check.type === 'domRender') return [check.script, check.dependency.module];
   if (check.type === 'fileContains') return [check.path];
   return [];
 }

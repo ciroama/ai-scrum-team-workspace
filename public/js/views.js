@@ -1,11 +1,12 @@
-// Rendering. Every view is a pure function of the server state, the
+// Shared renderers: full agent cards, timeline, evidence and results.
+// Every view is a pure function of the server state, the
 // selected workflow's detail and a little UI state. Nothing here invents
 // progress: all content comes from recorded workflows, tasks and events.
 
 import { bytes, dateTime, duration, h, icon, last, mount, time } from './dom.js';
 
-const EXECUTION_LABEL = { idle: 'Idle', working: 'Working', waiting: 'Waiting', completed: 'Completed', failed: 'Failed' };
-const CATEGORY_LABEL = {
+export const EXECUTION_LABEL = { idle: 'Idle', working: 'Working', waiting: 'Waiting', completed: 'Completed', failed: 'Failed' };
+export const CATEGORY_LABEL = {
   request: 'Requirement',
   analysis: 'Analysis',
   handoff: 'Handoff',
@@ -22,19 +23,19 @@ const CATEGORY_LABEL = {
   workflow: 'Workflow',
   error: 'Error',
 };
-const CATEGORY_ICON = { request: 'request', analysis: 'analysis', handoff: 'handoff', implementation: 'implementation', file: 'file', command: 'command', test: 'test', defect: 'defect', correction: 'correction', review: 'review', config: 'config', git: 'git', completion: 'completion', workflow: 'workflow', error: 'error' };
+export const CATEGORY_ICON = { request: 'request', analysis: 'analysis', handoff: 'handoff', implementation: 'implementation', file: 'file', command: 'command', test: 'test', defect: 'defect', correction: 'correction', review: 'review', config: 'config', git: 'git', completion: 'completion', workflow: 'workflow', error: 'error' };
 
 export function statusLabel(state, status) {
   return (state.statusLabels && state.statusLabels[status]) || status;
 }
 
-function agentLabel(state, id) {
+export function agentLabel(state, id) {
   if (id === 'user') return 'You';
   const agent = state.agents.find((a) => a.id === id);
   return agent ? agent.label : 'System';
 }
 
-function kindBadge(kind) {
+export function kindBadge(kind) {
   if (kind === 'scripted') return h('span', { className: 'badge badge-scripted', title: 'Fixed rules and templates in code. No AI model.' }, 'Scripted');
   if (kind === 'ai') return h('span', { className: 'badge badge-ai' }, 'AI-powered');
   if (kind === 'human') return h('span', { className: 'badge badge-human' }, 'Human');
@@ -42,7 +43,7 @@ function kindBadge(kind) {
 }
 
 /** <details> whose open state survives re-rendering. */
-function disclosure(ui, key, className, summary, body) {
+export function disclosure(ui, key, className, summary, body) {
   return h(
     'details',
     {
@@ -53,17 +54,6 @@ function disclosure(ui, key, className, summary, body) {
     h('summary', null, summary),
     body,
   );
-}
-
-// ---- Header -------------------------------------------------------------------
-
-export function renderHeader(state, detail) {
-  const focus = state.workflows.find((w) => w.id === state.focusWorkflowId);
-  const shown = detail ? detail.workflow : focus;
-  mount('project-name', shown ? shown.title : 'No project yet');
-  const pill = document.getElementById('overall-status');
-  pill.dataset.status = focus ? focus.status : 'none';
-  pill.textContent = focus ? `Workflow: ${statusLabel(state, focus.status)}` : 'No workflow';
 }
 
 // ---- Team -----------------------------------------------------------------------
@@ -149,73 +139,9 @@ export function renderTeam(state, ui, actions) {
   );
 }
 
-// ---- History ----------------------------------------------------------------------
-
-export function renderHistory(state, ui, actions) {
-  if (!state.workflows.length) {
-    mount('history', h('li', { className: 'empty' }, 'No workflows yet.'));
-    return;
-  }
-  mount(
-    'history',
-    state.workflows.map((wf) =>
-      h(
-        'li',
-        null,
-        h(
-          'button',
-          { type: 'button', 'aria-current': wf.id === ui.selectedId ? 'true' : 'false', onclick: () => actions.select(wf.id) },
-          h(
-            'span',
-            null,
-            h('span', { className: 'history-title' }, wf.title),
-            h('span', { className: 'history-meta' }, `${dateTime(wf.createdAt)} · "${wf.requestText.slice(0, 48)}${wf.requestText.length > 48 ? '…' : ''}"`),
-          ),
-          h('span', { className: 'status-pill', dataset: { status: wf.status } }, statusLabel(state, wf.status)),
-        ),
-      ),
-    ),
-  );
-}
-
-// ---- Request ----------------------------------------------------------------------
-
-export function renderRequest(state, ui, actions) {
-  const active = state.workflows.find((w) => w.id === state.activeWorkflowId);
-  const input = document.getElementById('request-input');
-  const button = document.getElementById('start-button');
-  const blockedBySlot = Boolean(active);
-  input.disabled = ui.submitting;
-  button.disabled = ui.submitting || blockedBySlot;
-  button.textContent = ui.submitting ? 'Starting…' : 'Start workflow';
-
-  mount(
-    'supported',
-    'Supported in this milestone: ',
-    state.recipes.map((recipe, i) => [
-      i > 0 ? ', ' : '',
-      h('button', { type: 'button', className: 'link-button', title: recipe.summary, onclick: () => actions.fillRequest(recipe.examples[0]) }, recipe.title),
-    ]),
-  );
-
-  const feedback = document.getElementById('request-feedback');
-  let message = ui.feedback;
-  if (!message && active) {
-    message = {
-      tone: 'info',
-      text:
-        active.status === 'blocked'
-          ? `"${active.title}" is blocked. This milestone runs one workflow at a time: resume or cancel it before starting a new request.`
-          : `"${active.title}" is running. This milestone runs one workflow at a time; you can start a new request when it finishes.`,
-    };
-  }
-  feedback.dataset.tone = message ? message.tone : '';
-  feedback.textContent = message ? message.text : '';
-}
-
 // ---- Progress ---------------------------------------------------------------------
 
-function stageStates(state, detail) {
+export function stageStates(state, detail) {
   const { workflow, tasks } = detail;
   const finished = !['running', 'blocked', 'interrupted'].includes(workflow.status);
   return state.stages.map((stage) => {
@@ -256,7 +182,7 @@ function stageStates(state, detail) {
   });
 }
 
-function outcomeStep(state, workflow) {
+export function outcomeStep(state, workflow) {
   const map = {
     completed: ['done', workflow.verified ? 'Completed · verified' : 'Completed'],
     failed: ['failed', 'Failed'],
@@ -270,9 +196,9 @@ function outcomeStep(state, workflow) {
   return { id: 'outcome', title: 'Outcome', agent: null, value, note };
 }
 
-const STEP_MARK = { done: '✓', failed: '✕', blocked: '!', interrupted: '!', active: '•', pending: '', skipped: '–' };
+export const STEP_MARK = { done: '✓', failed: '✕', blocked: '!', interrupted: '!', active: '•', pending: '', skipped: '–' };
 
-function verificationBadge(workflow) {
+export function verificationBadge(workflow) {
   if (workflow.verified) return h('span', { className: 'status-pill', dataset: { status: 'verified' } }, 'Verified by QA');
   const verification = workflow.state && workflow.state.verification;
   if (verification && verification.executed && verification.verdict === 'fail') {
@@ -282,57 +208,7 @@ function verificationBadge(workflow) {
   return h('span', { className: 'status-pill', dataset: { status: 'unverified' } }, 'Not verified');
 }
 
-export function renderProgress(state, detail, ui, actions) {
-  if (!detail) {
-    mount(
-      'progress',
-      h('div', { className: 'panel-head' }, h('h2', null, 'Workflow progress')),
-      h('div', { className: 'empty' }, 'No workflow yet. Describe what you would like to build above and click "Start workflow" to see the team at work.'),
-    );
-    return;
-  }
-  const { workflow, tasks } = detail;
-  const steps = stageStates(state, detail).concat(outcomeStep(state, workflow));
-  const running = tasks.find((t) => t.status === 'running');
-  const viewingOld = state.focusWorkflowId && workflow.id !== state.focusWorkflowId;
-
-  let nowLine = null;
-  if (running) nowLine = `Now: ${agentLabel(state, running.agentId)} — ${running.title.toLowerCase()}.`;
-  else if (workflow.status === 'running') nowLine = 'Now: moving to the next stage…';
-
-  mount(
-    'progress',
-    h(
-      'div',
-      { className: 'progress-head' },
-      h('div', { className: 'progress-title' }, h('h2', null, workflow.title), h('span', { className: 'muted small mono' }, workflow.id)),
-      h(
-        'div',
-        { className: 'progress-badges' },
-        h('span', { className: 'status-pill', dataset: { status: workflow.status } }, statusLabel(state, workflow.status)),
-        verificationBadge(workflow),
-        viewingOld && h('button', { type: 'button', className: 'btn btn-sm btn-ghost', onclick: () => actions.select(null) }, 'Return to current workflow'),
-      ),
-    ),
-    h('blockquote', { className: 'requirement-quote' }, `“${workflow.requestText}”`, h('span', { className: 'muted' }, `Submitted by you · ${dateTime(workflow.createdAt)}`)),
-    h(
-      'ol',
-      { className: 'stepper', 'aria-label': 'Workflow stages' },
-      steps.map((step) =>
-        h(
-          'li',
-          { className: 'step', dataset: { state: step.value } },
-          h('div', { className: 'step-top' }, h('span', { className: 'step-mark', 'aria-hidden': 'true' }, STEP_MARK[step.value]), step.title),
-          h('div', { className: 'step-meta' }, (step.agent ? `${agentLabel(state, step.agent)} · ` : '') + step.note),
-        ),
-      ),
-    ),
-    nowLine && h('p', { className: 'now-line' }, nowLine),
-    progressBanner(state, workflow, ui, actions),
-  );
-}
-
-function progressBanner(state, workflow, ui, actions) {
+export function progressBanner(state, workflow, ui, actions) {
   const busy = ui.pendingAction === workflow.id;
   if (workflow.status === 'blocked' || workflow.status === 'interrupted') {
     const stage = state.stages.find((s) => s.id === workflow.stage);
@@ -429,7 +305,7 @@ function evidenceFor(event, state) {
   }
 }
 
-function testTable(tests) {
+export function testTable(tests) {
   return h(
     'table',
     { className: 'data' },
@@ -450,7 +326,7 @@ function testTable(tests) {
   );
 }
 
-function criteriaList(criteria) {
+export function criteriaList(criteria) {
   return h(
     'ul',
     { className: 'criteria' },
@@ -465,7 +341,7 @@ function criteriaList(criteria) {
   );
 }
 
-function timelineEvent(event, state, ui) {
+export function timelineEvent(event, state, ui) {
   const isHandoff = event.type === 'handoff';
   const actorBlock = isHandoff
     ? [h('span', { className: 'actor' }, agentLabel(state, event.from)), h('span', { className: 'arrow', 'aria-label': 'to' }, '→'), h('span', { className: 'actor' }, agentLabel(state, event.to))]
