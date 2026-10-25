@@ -1,0 +1,15 @@
+{
+  "name": "ai-scrum-team-workspace",
+  "version": "0.1.0",
+  "description": "A local-first AI Scrum Team Workspace with real agent orchestration and execution tracking.",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.13.0 <23"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+  }
+}
