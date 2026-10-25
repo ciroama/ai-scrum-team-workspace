@@ -108,6 +108,58 @@ disabled, and nothing is pushed. On macOS, Git availability is checked via
 `xcode-select -p` first, so the dashboard never triggers Apple's installer
 dialog.
 
+## Live Preview
+
+`src/preview/previewService.js` is a small static file server, separate from
+the dashboard server and the orchestrator:
+
+- It listens on its own port (127.0.0.1; automatic free port, or
+  `PREVIEW_PORT`), so the product runs on a different origin than the
+  dashboard. The dashboard embeds it in a sandboxed iframe (`allow-scripts`
+  only).
+- It serves exactly one product at a time, at
+  `http://127.0.0.1:<port>/<workflowId>/<entry>`. Requests for any other
+  workflow return 404, so the iframe can never show the wrong product. Hidden
+  files (the product's `.git`) and paths outside the product folder are never
+  served.
+- Status: `not_started` → `starting` → `running` or `error`. It is `running`
+  only after an HTTP GET of the entry page succeeded. A refresh re-checks it, so
+  deleted files turn it into `error`.
+- Concurrent start requests share one start, and there is never more than one
+  server. Port conflicts and missing products are reported as `error` with the
+  reason.
+- Recipes declare how they are previewed (`preview: { type: 'static', entry:
+  'index.html' }`). Future product types (a website, a Breakout game) can reuse
+  the same panel, or add another preview type.
+
+## Analytics
+
+`src/analytics/analytics.js` computes statistics from
+`Repository#analyticsSource()`: all workflows and tasks, plus the
+`test.results`, `handoff`, `workflow.blocked`, `workflow.resumed` and
+`workflow.cancelled` events. **No new event recording was needed.** Every
+statistic below was already derivable from what the workspace records.
+
+- **Project** = the workflow's `recipe_id` (stable, set by the PO).
+  Workflows without one are "Unassigned". Every task and event belongs to one
+  workflow, and every workflow to one project, so filtering by workflow ids
+  cannot double count. "All Projects" is the union.
+- **Recorded metrics:** workflow counts by status, tests passed/failed
+  (sums of the recorded runs), correction cycles (QA → Developer feedback
+  handoffs), blocks by disabled agents (with the agent), tasks per agent.
+- **Calculated metrics:** success rate (verified ÷ (completed + failed)),
+  average/median completion time of verified workflows (wall clock, including
+  blocked time), average time blocked (block → next resume/cancel), agent
+  execution time (finished tasks only; interrupted tasks excluded).
+- Metrics with no supporting data return `null` and the page shows "Not enough
+  data yet".
+- **Not measured:** waiting time between handoffs (stages start immediately),
+  agent idle time, Milestone 1 history.
+- **Charts** use colours validated for the dark surface (single series
+  `#0ea5c4`; outcomes green `#0b9a6a`, amber `#b98509`, neutral `#6b7891`,
+  red `#dc4a4f`). Every bar is labelled with text and value, and has a hover
+  tooltip.
+
 ## HTTP API
 
 | Method | Path | Purpose |
@@ -118,7 +170,12 @@ dialog.
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
 | PUT | `/api/agents/:id` | `{ "enabled": true \| false }` |
-| GET | `/api/stream` | Server-Sent Events: `workflow-event`, `change` |
+| GET | `/api/preview` | Live Preview status |
+| POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
+| POST | `/api/preview/refresh` | re-check (and reload) the current preview |
+| POST | `/api/preview/stop` | stop the preview server |
+| GET | `/api/analytics` | `?project=all\|<id>\|unassigned&from=<iso>&to=<iso>` |
+| GET | `/api/stream` | Server-Sent Events: `workflow-event`, `change`, `preview` |
 
 ## Dashboard layout
 
@@ -130,9 +187,8 @@ shortcut cards. Responsive: three columns at 1280 px and wider, two columns
 below that, one column below 960 px.
 
 There is no Settings page, because the only configuration (agent
-availability) is on the team cards. The Live Preview slot is reserved but not
-implemented. A later preview can serve the product's `index.html` from the
-product folder.
+availability) is on the team cards. The sidebar also has an **Analytics**
+page. The right column's **Live Preview** panel shows the running product.
 
 ## Compatibility choices (macOS 11, Intel, 8 GB)
 
@@ -152,4 +208,8 @@ product folder.
   not occur in normal use. It is implemented and covered by automated tests
   that use a deliberately defective test double (never used by the app).
 - An interrupted stage reruns from its start.
-- No live preview, no code editor, no authentication, no Settings page.
+- Live Preview supports static products only (the only product type so far).
+  The preview iframe is small; use "open in a new tab" for a full view.
+- Analytics covers workflows recorded since the current schema. Execution times
+  are real but short, because scripted agents finish in milliseconds.
+- No code editor, no authentication, no Settings page.

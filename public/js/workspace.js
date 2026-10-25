@@ -22,6 +22,7 @@ export const ROUTES = [
   { id: 'team', label: 'Team', icon: 'team', hash: '#/team' },
   { id: 'activity', label: 'Team Activity', icon: 'activity', hash: '#/activity' },
   { id: 'repository', label: 'Repository', icon: 'repository', hash: '#/repository' },
+  { id: 'analytics', label: 'Analytics', icon: 'analytics', hash: '#/analytics' },
 ];
 
 // ---- Sidebar ------------------------------------------------------------------------
@@ -408,11 +409,21 @@ export function renderShortcuts(state, detail, ui) {
       status,
     );
 
+  const previewCard = () => {
+    const p = previewFor(state, detail);
+    const node = card('#/', 'tone-blue', 'preview', 'Live Preview', 'The generated product running locally on its own preview server.', chip(PREVIEW_TONE[p.status], PREVIEW_LABEL[p.status]));
+    node.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('preview-slot').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return node;
+  };
+
   mount(
     el,
     card('#/team', 'tone-violet', 'team', 'AI Scrum Team', 'Roles, availability and current work of the PO, Developer and QA.', chip(enabled === state.agents.length ? 'success' : 'warning', `${state.agents.length} agents · ${enabled} enabled`)),
     card('#/activity', 'tone-cyan', 'activity', 'Team Activity', 'Recorded events, handoffs, commands and decisions.', chip(ui.connection === 'live' ? 'success' : 'danger', ui.connection === 'live' ? `Live · ${events.length} events` : 'Not connected')),
-    card(null, 'tone-blue', 'preview', 'Live Preview', 'See the generated product running. Planned for a later milestone.', chip('neutral', 'Not in this milestone')),
+    previewCard(state, detail),
     card('#/repository', 'tone-orange', 'repository', 'Repository', 'Generated files, test results and Git commits of the product.', repoChip),
   );
 }
@@ -485,17 +496,90 @@ export function renderRail(state, detail, ui, actions) {
       : h('li', { className: 'empty' }, 'No activity yet.'),
   );
 
+  renderPreview(state, detail, ui, actions);
+}
+
+// ---- Live Preview ---------------------------------------------------------------------
+
+const PREVIEW_LABEL = { not_started: 'Not Started', starting: 'Starting', running: 'Running', error: 'Error' };
+const PREVIEW_TONE = { not_started: 'neutral', starting: 'info', running: 'success', error: 'danger' };
+
+/** The preview status that applies to the workflow shown on the dashboard. */
+export function previewFor(state, detail) {
+  const preview = state.preview;
+  const workflow = detail && detail.workflow;
+  if (!workflow || preview.workflowId !== workflow.id) return { ...preview, status: 'not_started', url: null, error: null, other: preview.workflowId && preview.status !== 'not_started' ? preview : null };
+  return { ...preview, other: null };
+}
+
+/**
+ * Renders the Live Preview panel. The iframe is kept between renders so the
+ * running product is not reloaded on every dashboard update; it is only
+ * replaced when the preview URL changes or the user clicks Refresh.
+ */
+export function renderPreview(state, detail, ui, actions) {
+  const slot = document.getElementById('preview-slot');
+  if (!slot.dataset.ready) {
+    mount(
+      slot,
+      h('div', { className: 'panel-head' }, h('h2', { id: 'preview-heading', className: 'with-icon' }, icon('preview'), 'Live Preview'), h('span', { id: 'preview-status', className: 'chip' })),
+      h('div', { id: 'preview-bar', className: 'preview-bar' }),
+      h('div', { id: 'preview-body', className: 'preview-body' }),
+    );
+    slot.dataset.ready = 'true';
+  }
+  const workflow = detail && detail.workflow;
+  const p = previewFor(state, detail);
+  const busy = ui.previewBusy;
+
+  const statusChip = document.getElementById('preview-status');
+  statusChip.dataset.tone = PREVIEW_TONE[p.status];
+  mount(statusChip, h('span', { className: 'dot' }), PREVIEW_LABEL[p.status]);
+
   mount(
-    'preview-slot',
-    h('div', { className: 'panel-head' }, h('h2', { id: 'preview-heading', className: 'with-icon' }, icon('preview'), 'Live Preview'), h('span', { className: 'chip' }, 'Not in this milestone')),
-    h(
-      'div',
-      { className: 'preview-frame' },
-      icon('preview'),
-      h('p', null, 'A live preview of the generated product is planned for a later milestone.'),
-      detail && detail.product.files.length ? h('p', null, h('a', { className: 'link-button', href: '#/repository' }, 'Open the generated files in Repository')) : null,
-    ),
+    'preview-bar',
+    h('span', { className: 'preview-dots', 'aria-hidden': 'true' }, h('span'), h('span'), h('span')),
+    h('span', { className: 'preview-url', title: p.url || '' }, p.url ? p.url.replace(/^http:\/\//, '') : 'No preview running'),
+    h('button', { type: 'button', className: 'icon-button', title: 'Refresh the preview', 'aria-label': 'Refresh the preview', disabled: busy || !(p.status === 'running' || p.status === 'error'), onclick: () => actions.refreshPreview() }, icon('refresh')),
+    h('a', { className: 'icon-button', title: 'Open in a new browser tab', 'aria-label': 'Open the preview in a new browser tab', href: p.status === 'running' ? p.url : null, target: '_blank', rel: 'noopener', 'aria-disabled': p.status === 'running' ? null : 'true' }, icon('external')),
   );
+
+  const body = document.getElementById('preview-body');
+  if (p.status === 'running') {
+    if (!ui.previewFrame || ui.previewFrame.dataset.url !== p.url || !body.contains(ui.previewFrame)) {
+      ui.previewFrame = h('iframe', {
+        src: p.url,
+        title: `Live preview of ${p.title || 'the generated product'}`,
+        sandbox: 'allow-scripts',
+        referrerpolicy: 'no-referrer',
+        dataset: { url: p.url },
+      });
+      mount(body, ui.previewFrame, h('p', { className: 'preview-caption' }, `Previewing "${p.title}" · ${p.workflowId}`));
+    }
+    return;
+  }
+  ui.previewFrame = null;
+
+  const hasProduct = Boolean(workflow && workflow.recipeId && detail.product.files.length);
+  let content;
+  if (p.status === 'starting') {
+    content = [h('p', null, 'Starting the preview server and checking that the product page loads…')];
+  } else if (p.status === 'error') {
+    content = [
+      h('p', { className: 'preview-error' }, p.error),
+      hasProduct ? h('button', { type: 'button', className: 'btn btn-sm', disabled: busy, onclick: () => actions.startPreview(workflow.id) }, 'Try again') : null,
+    ];
+  } else if (hasProduct) {
+    content = [
+      h('p', null, `Run the generated product "${workflow.title}" locally, on its own preview server.`),
+      p.other ? h('p', { className: 'muted small' }, `The preview currently shows another workflow (${p.other.title || p.other.workflowId}). Starting this one switches the preview.`) : null,
+      workflow.verified ? null : h('p', { className: 'muted small' }, 'Note: this product has not been verified by QA.'),
+      h('button', { type: 'button', className: 'btn btn-primary btn-sm', disabled: busy, onclick: () => actions.startPreview(workflow.id) }, 'Start preview'),
+    ];
+  } else {
+    content = [h('p', null, workflow ? 'This workflow has not generated a product to preview.' : 'Nothing to preview yet. Start a workflow to generate a product.')];
+  }
+  mount(body, h('div', { className: 'preview-frame' }, icon('preview'), content));
 }
 
 // ---- Secondary view shells -----------------------------------------------------------------

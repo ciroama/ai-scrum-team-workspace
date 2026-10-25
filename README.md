@@ -62,6 +62,40 @@ The generated product is a static web page (`index.html`, `app.js`,
 - **Repository** — the result: outcome, acceptance criteria, test results,
   open issues, generated files (read from disk) and Git commits.
 - **Projects** — all workflows, newest first.
+- **Live Preview** (right column) — the generated product running locally,
+  shown in the dashboard. See below.
+- **Analytics** — statistics calculated from recorded data, with a project
+  filter and an optional date range. See below.
+
+### Live Preview
+
+Click **Start preview** to run the product of the workflow shown on the
+dashboard. The product is served by a separate local preview server on its
+own port (127.0.0.1, a free port chosen automatically, or `PREVIEW_PORT`).
+The status is **Not Started**, **Starting**, **Running** or **Error**.
+"Running" is shown only after the product's page has actually been loaded
+from the preview server. Use the refresh button to reload and re-check it, or
+the open button to view it in a new browser tab. There is only one preview
+server: starting another workflow's preview switches it, and the old address
+stops serving. If the product is missing, or the server cannot start, the panel
+shows the reason.
+
+### Analytics
+
+All numbers are calculated from the workflows, tasks and events stored in
+`data/workspace.db`. Nothing is sample data. Each metric is labelled
+**Recorded** (read directly from records or events) or **Calculated**
+(derived from them), and the page explains how each one is computed. When
+there is not enough data, it shows "Not enough data yet" instead of a number.
+
+- **Project filter:** *All Projects*, or one project. A project is the product
+  type the PO assigned; workflows the PO never analysed are grouped as
+  *Unassigned*. Each workflow belongs to exactly one project, so nothing is
+  counted twice.
+- **Date filter:** by the date each workflow was submitted.
+- **Not available:** waiting time between handoffs (the next agent starts
+  immediately; only time blocked by a disabled agent is measured), agent idle
+  time, and Milestone 1 history.
 
 ### Enabling and disabling agents
 
@@ -115,6 +149,7 @@ to stop it.
 Options (environment variables):
 
 - `PORT` — HTTP port (default `3000`), e.g. `PORT=4000 npm start`
+- `PREVIEW_PORT` — port of the Live Preview server (default: a free port)
 - `WORKSPACE_DATA_DIR` — where the database and generated products are stored
   (default `./data`, ignored by Git). Delete it to start fresh.
 

@@ -204,6 +204,13 @@ export default {
     },
   ],
 
+  /**
+   * How the Live Preview shows this product: a static site served from the
+   * product folder, opened at `entry`. Future product types can declare
+   * other preview types without changing the dashboard panel.
+   */
+  preview: { type: 'static', entry: 'index.html' },
+
   /** Files the Developer writes. */
   implementation() {
     return [

@@ -17,10 +17,11 @@ const { startServer } = await import('./server/app.js');
 
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.WORKSPACE_DATA_DIR ?? 'data';
+const previewPort = Number(process.env.PREVIEW_PORT ?? 0);
 
 let app;
 try {
-  app = await startServer({ port, dataDir });
+  app = await startServer({ port, dataDir, previewPort });
 } catch (error) {
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${port} is already in use. Stop the other program or start with another port, e.g.: PORT=4000 npm start`);

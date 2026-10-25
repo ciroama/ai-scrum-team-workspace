@@ -63,6 +63,9 @@ const ICONS = {
   chevron: 'M9 6l6 6-6 6',
   chat: 'M4 5h16v11H9l-5 4V5zM8 10h8M8 13h5',
   local: 'M4 5h16v10H4V5zM2 19h20',
+  refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+  external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
+  analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
 };
 
 export function icon(name) {

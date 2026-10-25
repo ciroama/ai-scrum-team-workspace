@@ -5,6 +5,7 @@
 import { dateTime, duration, h, icon, mount } from './dom.js';
 import { renderResults, renderTeam, renderTimeline, statusLabel, verificationBadge } from './views.js';
 import * as ws from './workspace.js';
+import { analyticsQuery, mountAnalytics, renderAnalytics } from './analytics.js';
 
 const ui = {
   route: 'home',
@@ -17,6 +18,11 @@ const ui = {
   connection: 'connecting',
   pendingToggles: new Set(),
   pendingAction: null,
+  previewBusy: false,
+  analyticsFilter: { projectId: 'all', from: '', to: '' },
+  analytics: null,
+  analyticsError: null,
+  previewFrame: null,
   open: new Set(),
   renderedEvents: new Set(),
 };
@@ -62,6 +68,7 @@ async function refresh() {
       ui.pinned = false;
     }
     detail = ui.selectedId ? await api(`/api/workflows/${ui.selectedId}`) : null;
+    if (ui.route === 'analytics') await loadAnalytics();
     showError(null);
     render();
   } catch (error) {
@@ -150,6 +157,26 @@ const actions = {
     await workflowAction(workflowId, 'cancel');
   },
 
+  async startPreview(workflowId) {
+    await previewAction('/api/preview', { workflowId });
+  },
+
+  async refreshPreview() {
+    const status = await previewAction('/api/preview/refresh');
+    // Reload the running page even when its URL did not change.
+    if (status && status.status === 'running' && ui.previewFrame) ui.previewFrame.src = status.url;
+  },
+
+  async setAnalyticsFilter(filter, updateInputs) {
+    ui.analyticsFilter = filter;
+    if (updateInputs) {
+      document.getElementById('an-from').value = filter.from;
+      document.getElementById('an-to').value = filter.to;
+    }
+    await loadAnalytics();
+    render();
+  },
+
   select(workflowId) {
     if (!workflowId || (state && workflowId === state.focusWorkflowId)) {
       ui.pinned = false;
@@ -175,6 +202,30 @@ const actions = {
     }, 0);
   },
 };
+
+async function loadAnalytics() {
+  try {
+    ui.analytics = await api(analyticsQuery(ui.analyticsFilter));
+    ui.analyticsError = null;
+  } catch (error) {
+    ui.analyticsError = error.message;
+  }
+}
+
+async function previewAction(path, body) {
+  ui.previewBusy = true;
+  render();
+  try {
+    const options = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' };
+    return await api(path, options);
+  } catch (error) {
+    showError(`Live Preview: ${error.message}`);
+    return null;
+  } finally {
+    ui.previewBusy = false;
+    await refresh();
+  }
+}
 
 async function workflowAction(workflowId, action) {
   ui.pendingAction = workflowId;
@@ -213,6 +264,9 @@ function mountRoute() {
       break;
     case 'activity':
       ws.mountSection('Team Activity', 'Everything recorded for the workflow shown in the project header, with evidence.', 'timeline', 'ol', 'timeline');
+      break;
+    case 'analytics':
+      mountAnalytics(ui, actions);
       break;
     case 'repository':
       ws.mountSection('Repository', 'The generated product: files read from disk, test results and Git commits.', 'results', 'div', 'results');
@@ -285,6 +339,9 @@ function render() {
     case 'repository':
       renderResults(state, detail, ui);
       break;
+    case 'analytics':
+      renderAnalytics(ui.analytics, ui);
+      break;
     default:
       break;
   }
@@ -300,6 +357,7 @@ function routeFromHash() {
 window.addEventListener('hashchange', () => {
   ui.route = routeFromHash();
   render();
+  if (ui.route === 'analytics') refresh();
   document.getElementById('view').focus({ preventScroll: true });
 });
 
@@ -330,6 +388,7 @@ function connect() {
   };
   source.addEventListener('workflow-event', scheduleRefresh);
   source.addEventListener('change', scheduleRefresh);
+  source.addEventListener('preview', scheduleRefresh);
 }
 
 setInterval(() => ws.renderElapsed(detail), 1000);

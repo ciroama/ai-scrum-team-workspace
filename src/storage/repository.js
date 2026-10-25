@@ -275,6 +275,28 @@ export class Repository extends EventEmitter {
       .reverse();
   }
 
+  // ---- analytics source data -------------------------------------------------
+
+  /**
+   * Every workflow, task and the analytics-relevant events, read as recorded.
+   * Workspace-level events (no workflow) are excluded: they belong to no
+   * project.
+   */
+  analyticsSource() {
+    const workflows = this.db.prepare('SELECT * FROM workflows ORDER BY created_at, rowid').all().map(toWorkflow);
+    const tasks = this.db.prepare('SELECT * FROM tasks ORDER BY started_at, rowid').all().map(toTask);
+    const events = this.db
+      .prepare(
+        `SELECT * FROM events
+         WHERE workflow_id IS NOT NULL
+           AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled')
+         ORDER BY id`,
+      )
+      .all()
+      .map(toEvent);
+    return { workflows, tasks, events };
+  }
+
   // ---- startup recovery ----------------------------------------------------
 
   /**

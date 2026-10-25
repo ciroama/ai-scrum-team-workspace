@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../storage/database.js';
@@ -7,7 +8,9 @@ import { Repository } from '../storage/repository.js';
 import { ConflictError, NotFoundError, Orchestrator, REQUEST_LIMITS, ValidationError } from '../core/orchestrator.js';
 import { describeTeam } from '../core/agentActivity.js';
 import { STAGES, STAGE_ORDER, WORKFLOW_STATUS } from '../core/stages.js';
-import { catalogue } from '../recipes/index.js';
+import { catalogue, getRecipe } from '../recipes/index.js';
+import { PreviewError, PreviewService } from '../preview/previewService.js';
+import { computeAnalytics, parseDateFilter } from '../analytics/analytics.js';
 import { createTeam } from '../agents/team.js';
 import { AgentKind } from '../agents/agent.js';
 import { resolveInside } from '../actions/writeFile.js';
@@ -65,12 +68,30 @@ function statusFor(error) {
  * @param {string} options.dataDir
  * @param {Map<string, object>} [options.team]
  * @param {string} [options.gitBinary]
+ * @param {number} [options.previewPort]  0 (default) picks a free port
  */
-export function createApp({ dataDir, team = createTeam(), gitBinary }) {
+export function createApp({ dataDir, team = createTeam(), gitBinary, previewPort = 0 }) {
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
   const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary });
   orchestrator.init();
+
+  /** Finds a workflow's product folder and the page the preview opens. */
+  async function resolveProduct(workflowId) {
+    const workflow = repository.getWorkflow(workflowId);
+    if (!workflow) throw new PreviewError('This workflow does not exist.');
+    const recipe = getRecipe(workflow.recipeId);
+    if (!recipe) throw new PreviewError('This workflow has no product yet: the PO has not assigned a product type.');
+    if (!recipe.preview || recipe.preview.type !== 'static') {
+      throw new PreviewError(`Products of type "${recipe.title}" do not support Live Preview yet.`);
+    }
+    const dir = orchestrator.productDir(workflowId);
+    if (!existsSync(join(dir, recipe.preview.entry))) {
+      throw new PreviewError(`The product is not available: ${recipe.preview.entry} has not been generated for this workflow.`);
+    }
+    return { dir, entry: recipe.preview.entry, title: workflow.title };
+  }
+  const preview = new PreviewService({ resolveProduct, port: previewPort });
 
   const sseClients = new Set();
   const broadcast = (eventName, data) => {
@@ -79,6 +100,7 @@ export function createApp({ dataDir, team = createTeam(), gitBinary }) {
   };
   repository.on('event', (event) => broadcast('workflow-event', event));
   repository.on('change', (change) => broadcast('change', change));
+  preview.on('change', (status) => broadcast('preview', status));
   const heartbeat = setInterval(() => {
     for (const res of sseClients) res.write(': keep-alive\n\n');
   }, 15_000);
@@ -106,6 +128,7 @@ export function createApp({ dataDir, team = createTeam(), gitBinary }) {
       activeWorkflowId: repository.findActiveWorkflow()?.id ?? null,
       workspaceEvents: focus ? [] : repository.listWorkspaceEvents(),
       git: await orchestrator.git(),
+      preview: preview.status(),
       legacyBackup,
     };
   }
@@ -129,6 +152,38 @@ export function createApp({ dataDir, team = createTeam(), gitBinary }) {
         return [201, { workflow }];
       },
     ],
+    [
+      'GET',
+      /^\/api\/analytics$/,
+      (req) => {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        let from;
+        let to;
+        try {
+          from = parseDateFilter(params.get('from'), 'from');
+          to = parseDateFilter(params.get('to'), 'to');
+        } catch (error) {
+          throw new HttpError(400, error.message);
+        }
+        return computeAnalytics(
+          repository.analyticsSource(),
+          { projectId: params.get('project') || 'all', from, to },
+          { recipes: catalogue(orchestrator.recipes), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
+        );
+      },
+    ],
+    ['GET', /^\/api\/preview$/, () => preview.status()],
+    [
+      'POST',
+      /^\/api\/preview$/,
+      async (req) => {
+        const { workflowId } = await readJsonBody(req);
+        if (typeof workflowId !== 'string' || !workflowId) throw new HttpError(400, 'Choose the workflow whose product you want to preview.');
+        return preview.start(workflowId);
+      },
+    ],
+    ['POST', /^\/api\/preview\/refresh$/, () => preview.refresh()],
+    ['POST', /^\/api\/preview\/stop$/, () => preview.stop()],
     ['POST', /^\/api\/workflows\/([\w-]+)\/resume$/, (_req, [id]) => ({ workflow: orchestrator.resume(id).workflow })],
     ['POST', /^\/api\/workflows\/([\w-]+)\/cancel$/, (_req, [id]) => ({ workflow: orchestrator.cancel(id) })],
     [
@@ -199,12 +254,13 @@ export function createApp({ dataDir, team = createTeam(), gitBinary }) {
   async function close() {
     clearInterval(heartbeat);
     if (orchestrator.current) await orchestrator.current.promise.catch(() => {});
+    await preview.close();
     for (const res of sseClients) res.end();
     sseClients.clear();
     db.close();
   }
 
-  return { handle, repository, orchestrator, team, close, legacyBackup };
+  return { handle, repository, orchestrator, team, preview, close, legacyBackup };
 }
 
 /**
