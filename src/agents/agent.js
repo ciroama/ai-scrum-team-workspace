@@ -2,37 +2,29 @@
  * Agent kinds.
  *
  *  - SCRIPTED: behaviour is fixed rules and templates written in this code
- *    base. No AI model is involved. Every agent in Milestone 1 is scripted.
+ *    base. No AI model is involved and no autonomous reasoning happens.
+ *    Every agent in this milestone is scripted.
  *  - AI: reserved for future model-backed agents (local model, Claude Code
- *    CLI, API key, ...). Not implemented in Milestone 1.
+ *    CLI, API key, ...). Not implemented.
  */
 export const AgentKind = Object.freeze({ SCRIPTED: 'scripted', AI: 'ai' });
 
 /**
  * @typedef {object} AgentProfile
  * @property {string} id
- * @property {string} name
- * @property {string} role
+ * @property {string} label           short name shown in the UI ("PO")
+ * @property {string} title           full role name ("Product Owner")
  * @property {string} summary
  * @property {string[]} responsibilities
  */
 
 /**
- * @typedef {object} Action
- * A request for the platform to do real work on the agent's behalf.
- * @property {'writeFile' | 'runTests'} type
- */
-
-/**
- * @typedef {object} AgentResult
- * @property {string[]} messages  what the agent reports (shown verbatim)
- * @property {Action[]} [actions] work for the platform to execute
- * @property {object} [output]    data merged into the run context
- */
-
-/**
- * Base class for all agents. An agent decides; the orchestrator executes
- * the actions it asks for and records every step as an event.
+ * Base class for all agents. Agents only decide and describe: they return
+ * structured outputs (requirements, files to write, commands to run,
+ * verdicts). The orchestrator executes the work and records every step.
+ *
+ * Each role has its own contract (see productOwner.js, developer.js,
+ * qa.js). A future AI-powered agent implements the same methods.
  */
 export class Agent {
   /**
@@ -52,20 +44,8 @@ export class Agent {
     return this.profile.kind;
   }
 
-  /**
-   * Decide what to do for a workflow step.
-   * @returns {Promise<AgentResult>}
-   */
-  async perform(_task, _context) {
-    throw new Error(`${this.id} does not implement perform()`);
-  }
-
-  /**
-   * Optional: inspect the results of the actions requested in perform().
-   * @returns {Promise<AgentResult>}
-   */
-  async review(_task, _context, _actionResults) {
-    return { messages: [] };
+  get label() {
+    return this.profile.label;
   }
 }
 

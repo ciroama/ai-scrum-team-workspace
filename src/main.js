@@ -8,7 +8,7 @@ if (major !== REQUIRED.major || minor < REQUIRED.minor) {
   console.error(
     `AI Scrum Team Workspace needs Node.js ${REQUIRED.major}.x (>= ${REQUIRED.major}.${REQUIRED.minor}).\n` +
       `You are running Node.js ${process.versions.node}.\n` +
-      'Install the Node.js 22 LTS macOS installer (.pkg) from https://nodejs.org/en/download',
+      'Install the Node.js 22 LTS macOS installer (.pkg) from https://nodejs.org/dist/latest-v22.x/',
   );
   process.exit(1);
 }
@@ -18,14 +18,28 @@ const { startServer } = await import('./server/app.js');
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.WORKSPACE_DATA_DIR ?? 'data';
 
-const { url, close } = await startServer({ port, dataDir });
-console.log(`AI Scrum Team Workspace running at ${url}`);
-console.log(`Data directory: ${dataDir} (SQLite database + generated run workspaces)`);
-console.log('Agents in this milestone are SCRIPTED (rule/template based). No AI model or paid API is used.');
+let app;
+try {
+  app = await startServer({ port, dataDir });
+} catch (error) {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${port} is already in use. Stop the other program or start with another port, e.g.: PORT=4000 npm start`);
+  } else {
+    console.error(`The workspace could not start: ${error.message}`);
+    console.error(`Check that the data folder "${dataDir}" is writable.`);
+  }
+  process.exit(1);
+}
+
+console.log(`AI Scrum Team Workspace running at ${app.url}`);
+console.log(`Data folder: ${dataDir} (SQLite database + generated products)`);
+if (app.legacyBackup) console.log(`The Milestone 1 database was kept as ${app.legacyBackup}.`);
+console.log('The PO, Developer and QA agents are SCRIPTED in this milestone: fixed rules and templates, no AI model or paid API.');
+console.log('Keep this window open while you use the dashboard. Press Ctrl+C to stop.');
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
-    await close();
+    await app.close();
     process.exit(0);
   });
 }

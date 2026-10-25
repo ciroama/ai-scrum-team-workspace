@@ -3,83 +3,88 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>AI Scrum Team Workspace</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>AI Scrum Team Workspace</h1>
-        <p class="subtitle">Milestone 1 · local workspace · real execution tracking</p>
+    <header class="header">
+      <div class="brand">
+        <img class="brand-mark" src="/favicon.svg" alt="" width="32" height="32" />
+        <div>
+          <div class="brand-name">AI Scrum Team Workspace</div>
+          <div class="brand-project"><span class="muted">Project:</span> <span id="project-name">No project yet</span></div>
+        </div>
       </div>
-      <div id="connection" class="connection" data-state="connecting">
-        <span class="dot"></span><span class="label">Connecting…</span>
+      <div class="header-meta">
+        <span class="chip chip-local" title="Runs on this computer only. Data is stored in the local data folder."><span class="dot"></span>Local workspace</span>
+        <span id="connection" class="chip chip-connection" data-state="connecting"><span class="dot"></span><span class="label">Connecting…</span></span>
+        <span id="overall-status" class="status-pill" data-status="none">No workflow</span>
+        <button id="new-request" class="btn btn-ghost" type="button">New request</button>
       </div>
     </header>
 
-    <div class="notice" role="note">
-      <strong>Scripted agents, real execution.</strong>
-      Every agent in this milestone is <em>scripted</em>: it follows fixed rules and templates written in code.
-      No AI model or paid API is called. The files written, the commands run and the test results shown are real.
-    </div>
+    <div id="global-error" class="global-error" role="alert" hidden></div>
 
     <main class="layout">
-      <aside class="sidebar">
-        <section class="panel">
-          <h2>Team</h2>
-          <p class="hint">Agents: PO (Product Owner), Dev (Developer) and QA.</p>
-          <div id="team" class="team"></div>
-          <dl class="legend">
-            <div><dt><span class="badge badge-scripted">Scripted</span></dt><dd>Rules and templates in code. No AI model.</dd></div>
-            <div><dt><span class="badge badge-ai">AI-powered</span></dt><dd>Model-backed agent. Not used in Milestone 1.</dd></div>
-            <div><dt><span class="badge badge-human">Human</span></dt><dd>You. Not an agent.</dd></div>
-          </dl>
+      <aside class="column column-team">
+        <section class="panel" aria-labelledby="team-heading">
+          <div class="panel-head">
+            <h2 id="team-heading">AI Scrum Team</h2>
+            <span class="badge badge-scripted">Scripted agents</span>
+          </div>
+          <p class="panel-note">
+            In this milestone the agents follow fixed rules and templates written in code. They do not use an AI model
+            and do not reason autonomously. The files they produce, the commands they run and the test results are real.
+          </p>
+          <div id="human-card"></div>
+          <div id="agent-cards" class="agent-cards"></div>
         </section>
 
-        <section class="panel">
-          <h2>Backlog</h2>
-          <div id="backlog"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Run history</h2>
+        <section class="panel" aria-labelledby="history-heading">
+          <div class="panel-head"><h2 id="history-heading">Workflow history</h2></div>
           <ol id="history" class="history"></ol>
         </section>
       </aside>
 
-      <section class="content">
-        <section class="panel" id="run-panel">
-          <div id="run-header" class="run-header"></div>
-          <ol id="steps" class="steps"></ol>
+      <div class="column column-main">
+        <section class="panel panel-request" aria-labelledby="request-heading">
+          <h2 id="request-heading" class="request-title">What would you like to build?</h2>
+          <p class="muted">Describe it in your own words. The PO turns your request into requirements and acceptance criteria for the team.</p>
+          <form id="request-form" novalidate>
+            <label class="sr-only" for="request-input">Your requirement</label>
+            <textarea id="request-input" rows="3" maxlength="2000" placeholder="e.g. Build a Hello World application."></textarea>
+            <div class="request-footer">
+              <div id="supported" class="supported"></div>
+              <div class="request-actions">
+                <span id="char-count" class="muted small">0 / 2000</span>
+                <button id="start-button" class="btn btn-primary" type="submit">Start workflow</button>
+              </div>
+            </div>
+            <div id="request-feedback" class="feedback" role="status" aria-live="polite"></div>
+          </form>
         </section>
 
-        <div class="columns">
-          <section class="panel">
-            <h2>Execution events</h2>
-            <p class="hint">Recorded as each operation happens and kept in SQLite. Command output lines are shown in the terminal panel.</p>
+        <section id="progress" class="panel" aria-label="Workflow progress"></section>
+
+        <div class="split">
+          <section class="panel panel-timeline" aria-labelledby="timeline-heading">
+            <div class="panel-head">
+              <h2 id="timeline-heading">Team activity</h2>
+              <span class="muted small">Recorded as it happens</span>
+            </div>
             <ol id="timeline" class="timeline"></ol>
           </section>
 
-          <section class="panel">
-            <h2>Test results</h2>
-            <p class="hint">Read from the real <code>node --test</code> output in the run workspace.</p>
-            <div id="tests"></div>
+          <section class="panel panel-results" aria-labelledby="results-heading">
+            <div class="panel-head"><h2 id="results-heading">Results &amp; repository</h2></div>
+            <div id="results"></div>
           </section>
         </div>
-
-        <section class="panel">
-          <h2>Generated files</h2>
-          <p class="hint">Read from disk in the run workspace.</p>
-          <div id="files" class="files"></div>
-        </section>
-
-        <section class="panel">
-          <h2>Terminal</h2>
-          <pre id="terminal" class="terminal"></pre>
-        </section>
-      </section>
+      </div>
     </main>
 
-    <script src="/app.js"></script>
+    <script type="module" src="/js/app.js"></script>
   </body>
 </html>

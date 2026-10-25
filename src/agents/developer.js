@@ -1,57 +1,55 @@
 import { ScriptedAgent } from './agent.js';
+import { getRecipe } from '../recipes/index.js';
 
-const CORRECT_IMPLEMENTATION = `/**
- * Returns a greeting. Blank or missing names fall back to "World".
- * @param {string} [name]
+/**
+ * @typedef {object} Implementation
+ * @property {Array<{ path: string, purpose: string, content: string }>} files
+ * @property {string} summary
+ * @property {string} handoffMessage
  */
-export function greet(name) {
-  const who = typeof name === 'string' && name.trim() !== '' ? name.trim() : 'World';
-  return \`Hello, \${who}!\`;
-}
-`;
-
-// Used only in the "faulty" run mode, to show that test results are real:
-// this implementation ignores its argument, so AC2 must fail.
-const FAULTY_IMPLEMENTATION = `// DEFECT INJECTED ON PURPOSE (run mode "faulty"): the name argument is ignored.
-export function greet(name) {
-  return 'Hello, World!';
-}
-`;
 
 export class DeveloperAgent extends ScriptedAgent {
   constructor() {
     super({
       id: 'dev',
-      name: 'Dev',
-      role: 'Developer',
-      summary: 'Implements stories as working code in the run workspace.',
-      responsibilities: ['Implements the story', 'Keeps code small and readable', 'Hands work to QA'],
+      label: 'Developer',
+      title: 'Developer',
+      summary: 'Implements the agreed requirements as real project files and fixes defects reported by QA.',
+      responsibilities: [
+        'Implements the requirements',
+        'Creates and modifies project files',
+        'Fixes defects reported by QA',
+        'Hands the implementation to QA',
+      ],
     });
   }
 
-  async perform({ mode }) {
-    const faulty = mode === 'faulty';
+  /** The files for a spec. Overridable, e.g. by test doubles. */
+  files(spec, _attempt) {
+    const recipe = getRecipe(spec.recipeId);
+    if (!recipe) throw new Error(`The scripted Developer has no code template for "${spec.recipeId}"`);
+    return recipe.implementation(spec);
+  }
+
+  /**
+   * @param {{ spec: import('./productOwner.js').Spec, attempt: number, defects: object[] }} input
+   * @returns {Implementation}
+   */
+  implement({ spec, attempt, defects = [] }) {
+    const files = this.files(spec, attempt);
+    const paths = files.map((f) => f.path).join(', ');
+    const correcting = defects.length > 0;
     return {
-      messages: faulty
-        ? [
-            'Used the "hello-world" code template with a deliberately injected defect (faulty mode).',
-            'The defect: greet() ignores its name argument.',
-          ]
-        : ['Used the "hello-world" code template to implement greet(name) in hello.js.'],
-      actions: [
-        {
-          type: 'writeFile',
-          path: 'package.json',
-          purpose: 'Marks the workspace as an ES module package',
-          content: `${JSON.stringify({ name: 'hello-world', private: true, type: 'module' }, null, 2)}\n`,
-        },
-        {
-          type: 'writeFile',
-          path: 'hello.js',
-          purpose: faulty ? 'Implementation (with injected defect)' : 'Implementation',
-          content: faulty ? FAULTY_IMPLEMENTATION : CORRECT_IMPLEMENTATION,
-        },
-      ],
+      files,
+      summary: correcting
+        ? `Correction (attempt ${attempt}): re-applied the "${spec.title}" code template to address ` +
+          `${defects.length} reported defect(s); wrote ${files.length} files.`
+        : `Implemented "${spec.title}" from the code template: ${files.length} files (${paths}).`,
+      handoffMessage: correcting
+        ? `The implementation was updated to address ${defects.map((d) => d.criterionId ?? d.title).join(', ')}. ` +
+          `Please re-test it against the acceptance criteria.`
+        : `The implementation is ready (${files.length} files). Please verify it against acceptance criteria ` +
+          `${spec.acceptanceCriteria.map((c) => c.id).join(', ')}.`,
     };
   }
 }

@@ -5,8 +5,8 @@ import { spawn } from 'node:child_process';
  * `node --test` started from inside another test run (e.g. our own
  * end-to-end tests) reports normally instead of as a nested subtest.
  */
-function childEnv() {
-  const env = { ...process.env };
+export function childEnv(overrides = {}) {
+  const env = { ...process.env, ...overrides };
   delete env.NODE_TEST_CONTEXT;
   return env;
 }
@@ -19,14 +19,15 @@ function childEnv() {
  * @param {string[]} options.args
  * @param {string} options.cwd
  * @param {number} [options.timeoutMs]
+ * @param {Record<string, string>} [options.env] full environment (defaults to childEnv())
  * @param {(stream: 'stdout' | 'stderr', line: string) => void} [options.onLine]
  * @returns {Promise<{ exitCode: number | null, signal: string | null, timedOut: boolean,
  *                     durationMs: number, stdout: string, stderr: string }>}
  */
-export function runCommand({ command, args, cwd, timeoutMs = 60_000, onLine = () => {} }) {
+export function runCommand({ command, args, cwd, timeoutMs = 60_000, env = childEnv(), onLine = () => {} }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
-    const child = spawn(command, args, { cwd, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = { stdout: '', stderr: '' };
     const pending = { stdout: '', stderr: '' };
     let timedOut = false;

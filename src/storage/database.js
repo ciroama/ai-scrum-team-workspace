@@ -1,53 +1,100 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+export const SCHEMA_VERSION = 2;
+
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS stories (
-  id          TEXT PRIMARY KEY,
-  title       TEXT NOT NULL,
-  description TEXT NOT NULL,
-  workflow    TEXT NOT NULL,
-  status      TEXT NOT NULL,
-  acceptance  TEXT,
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS agent_config (
+  agent_id   TEXT PRIMARY KEY,
+  enabled    INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS runs (
+CREATE TABLE IF NOT EXISTS workflows (
+  id             TEXT PRIMARY KEY,
+  request_text   TEXT NOT NULL,
+  recipe_id      TEXT,
+  title          TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  stage          TEXT NOT NULL,
+  verified       INTEGER NOT NULL DEFAULT 0,
+  blocked_reason TEXT,
+  error          TEXT,
+  state          TEXT NOT NULL,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  finished_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
   id          TEXT PRIMARY KEY,
-  story_id    TEXT NOT NULL REFERENCES stories(id),
-  mode        TEXT NOT NULL,
+  workflow_id TEXT NOT NULL REFERENCES workflows(id),
+  agent_id    TEXT NOT NULL,
+  stage       TEXT NOT NULL,
+  title       TEXT NOT NULL,
   status      TEXT NOT NULL,
+  input       TEXT,
+  output      TEXT,
+  error       TEXT,
   started_at  TEXT NOT NULL,
-  finished_at TEXT,
-  summary     TEXT
+  finished_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id      TEXT NOT NULL REFERENCES runs(id),
-  seq         INTEGER NOT NULL,
+  workflow_id TEXT REFERENCES workflows(id),
   ts          TEXT NOT NULL,
   type        TEXT NOT NULL,
-  step        TEXT,
-  agent_id    TEXT,
-  agent_kind  TEXT,
-  payload     TEXT NOT NULL,
-  UNIQUE (run_id, seq)
+  category    TEXT NOT NULL,
+  actor       TEXT NOT NULL,
+  actor_kind  TEXT NOT NULL,
+  from_actor  TEXT,
+  to_actor    TEXT,
+  summary     TEXT NOT NULL,
+  detail      TEXT,
+  status      TEXT NOT NULL,
+  error       TEXT,
+  task_id     TEXT
 );
 
-CREATE INDEX IF NOT EXISTS events_by_run ON events (run_id, seq);
+CREATE INDEX IF NOT EXISTS events_by_workflow ON events (workflow_id, id);
+CREATE INDEX IF NOT EXISTS tasks_by_workflow ON tasks (workflow_id, started_at);
 `;
+
+/**
+ * Milestone 1 used a different schema (stories/runs). Its database only
+ * held demo runs, so instead of migrating it we keep it, renamed, next to
+ * the new one.
+ */
+function backUpLegacyDatabase(file) {
+  if (!existsSync(file)) return null;
+  const probe = new DatabaseSync(file);
+  const legacy = probe.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stories'`).get();
+  probe.close();
+  if (!legacy) return null;
+
+  const backup = file.replace(/\.db$/, '') + '.v1.db';
+  for (const suffix of ['', '-wal', '-shm']) {
+    if (existsSync(file + suffix)) renameSync(file + suffix, backup + suffix);
+  }
+  return backup;
+}
 
 /**
  * Opens (and creates if needed) the workspace SQLite database.
  * @param {string} file path to the database file, or ':memory:'
+ * @returns {{ db: import('node:sqlite').DatabaseSync, legacyBackup: string | null }}
  */
 export function openDatabase(file) {
-  if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
+  let legacyBackup = null;
+  if (file !== ':memory:') {
+    mkdirSync(dirname(file), { recursive: true });
+    legacyBackup = backUpLegacyDatabase(file);
+  }
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
-  return db;
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  return { db, legacyBackup };
 }
