@@ -8,6 +8,7 @@ const stamp = () => now().replace(/[-:.TZ]/g, '').slice(0, 14);
 function toWorkflow(row) {
   return row && {
     id: row.id,
+    productId: row.product_id,
     requestText: row.request_text,
     recipeId: row.recipe_id,
     title: row.title,
@@ -144,15 +145,19 @@ export class Repository extends EventEmitter {
 
   // ---- workflows -----------------------------------------------------------
 
-  createWorkflow({ requestText, stage }) {
+  /**
+   * @param {{ requestText: string, stage: string, productId?: string | null, title?: string, state?: object }} fields
+   *   productId: the product this request changes; omitted for a new product
+   */
+  createWorkflow({ requestText, stage, productId = null, title = 'New request', state = {} }) {
     const id = `wf-${stamp()}-${randomUUID().slice(0, 6)}`;
     const ts = now();
     this.db
       .prepare(
-        `INSERT INTO workflows (id, request_text, title, status, stage, state, created_at, updated_at)
-         VALUES (?, ?, ?, 'running', ?, '{}', ?, ?)`,
+        `INSERT INTO workflows (id, product_id, request_text, title, status, stage, state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
       )
-      .run(id, requestText, 'New request', stage, ts, ts);
+      .run(id, productId ?? id, requestText, title, stage, JSON.stringify(state), ts, ts);
     this.emit('change', { entity: 'workflow', id });
     return this.getWorkflow(id);
   }
@@ -166,6 +171,75 @@ export class Repository extends EventEmitter {
       .prepare('SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC LIMIT ?')
       .all(limit)
       .map(toWorkflow);
+  }
+
+  /** The workflows (iterations) of a product, oldest first. */
+  listProductWorkflows(productId) {
+    return this.db
+      .prepare('SELECT * FROM workflows WHERE product_id = ? ORDER BY created_at, rowid')
+      .all(productId)
+      .map(toWorkflow);
+  }
+
+  /**
+   * Every product with a summary of its iterations, most recently changed
+   * first. The title is the one from the latest agreed requirements.
+   */
+  listProducts() {
+    const byProduct = new Map();
+    for (const workflow of this.db.prepare('SELECT * FROM workflows ORDER BY created_at, rowid').all().map(toWorkflow)) {
+      const list = byProduct.get(workflow.productId) ?? [];
+      list.push(workflow);
+      byProduct.set(workflow.productId, list);
+    }
+    return [...byProduct.entries()]
+      .map(([id, workflows]) => {
+        const latest = workflows.at(-1);
+        const withSpec = workflows.filter((w) => w.state?.spec);
+        return {
+          id,
+          title: withSpec.at(-1)?.state.spec.title ?? latest.title,
+          iterations: workflows.length,
+          versions: withSpec.length,
+          latestWorkflowId: latest.id,
+          latestStatus: latest.status,
+          recipeId: withSpec.at(-1)?.recipeId ?? null,
+          createdAt: workflows[0].createdAt,
+          updatedAt: latest.updatedAt,
+        };
+      })
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  }
+
+  /**
+   * Deletes workflows with their tasks and events, for good.
+   * @param {string | null} productId  null deletes everything, including
+   *   workspace-level events
+   * @returns {string[]} the deleted workflow ids
+   */
+  deleteWorkflows(productId) {
+    const ids = (productId == null
+      ? this.db.prepare('SELECT id FROM workflows').all()
+      : this.db.prepare('SELECT id FROM workflows WHERE product_id = ?').all(productId)
+    ).map((r) => r.id);
+    this.db.exec('BEGIN');
+    try {
+      if (productId == null) {
+        this.db.exec('DELETE FROM events; DELETE FROM tasks; DELETE FROM workflows;');
+      } else {
+        for (const id of ids) {
+          this.db.prepare('DELETE FROM events WHERE workflow_id = ?').run(id);
+          this.db.prepare('DELETE FROM tasks WHERE workflow_id = ?').run(id);
+          this.db.prepare('DELETE FROM workflows WHERE id = ?').run(id);
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    this.emit('change', { entity: 'product', id: productId });
+    return ids;
   }
 
   /** The workflow occupying the single slot (running or blocked), if any. */

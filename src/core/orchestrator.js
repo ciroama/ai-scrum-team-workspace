@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
@@ -82,8 +82,23 @@ export class Orchestrator {
     return this.gitStatus;
   }
 
+  /**
+   * The folder of a workflow's product. All iterations of a product share the
+   * folder (and its Git repository) of the product's first workflow.
+   */
   productDir(workflowId) {
-    return join(this.dataDir, 'workflows', workflowId, 'product');
+    const productId = this.repository.getWorkflow(workflowId)?.productId ?? workflowId;
+    return join(this.dataDir, 'workflows', productId, 'product');
+  }
+
+  /**
+   * The latest agreed requirements of a product: the base a change request
+   * builds on. The files on disk correspond to this iteration or later work.
+   */
+  baseOf(productId) {
+    const versions = this.repository.listProductWorkflows(productId).filter((w) => w.state?.spec);
+    const latest = versions.at(-1);
+    return latest ? { workflowId: latest.id, version: latest.state.spec.version ?? versions.length, spec: latest.state.spec } : null;
   }
 
   label(actor) {
@@ -95,9 +110,13 @@ export class Orchestrator {
 
   /**
    * Validates and records a requirement, then runs its workflow in the background.
+   * With a productId the request is a change to that product: the PO starts
+   * from its current requirements and the Developer from its current files.
+   * @param {string} requestText
+   * @param {{ productId?: string | null }} [options]
    * @returns {{ workflow: object, done: Promise<object> }}
    */
-  submit(requestText) {
+  submit(requestText, { productId = null } = {}) {
     if (typeof requestText !== 'string' || requestText.trim() === '') {
       throw new ValidationError('Please describe what you would like to build.');
     }
@@ -118,7 +137,24 @@ export class Orchestrator {
       );
     }
 
-    const workflow = this.repository.createWorkflow({ requestText: text, stage: 'analysis' });
+    let base = null;
+    if (productId != null) {
+      if (typeof productId !== 'string' || !this.repository.listProductWorkflows(productId).length) {
+        throw new NotFoundError('This product does not exist (it may have been deleted). Choose another product or start a new one.');
+      }
+      base = this.baseOf(productId);
+      if (!base) {
+        throw new ValidationError('This product has no agreed requirements yet, so there is nothing to change. Start a new product instead.');
+      }
+    }
+
+    const workflow = this.repository.createWorkflow({
+      requestText: text,
+      stage: 'analysis',
+      productId,
+      title: base ? base.spec.title : 'New request',
+      state: base ? { base } : {},
+    });
     const config = this.repository.getAgentConfig();
     const team = [...this.team.values()].map((a) => ({ id: a.id, label: a.label, kind: a.kind, enabled: config[a.id]?.enabled ?? false }));
 
@@ -127,8 +163,8 @@ export class Orchestrator {
       category: 'request',
       actor: 'user',
       actorKind: 'human',
-      summary: `Requirement submitted: "${text}"`,
-      detail: { requestText: text },
+      summary: base ? `Change request for "${base.spec.title}" (requirements v${base.version}): "${text}"` : `Requirement submitted: "${text}"`,
+      detail: { requestText: text, ...(base ? { productId, baseVersion: base.version, baseWorkflowId: base.workflowId } : {}) },
     });
     this.#event(workflow.id, {
       type: 'workflow.created',
@@ -168,6 +204,25 @@ export class Orchestrator {
         (workflow.status === 'interrupted' ? ' (the interrupted stage runs again from the start).' : '.'),
     });
     return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
+  }
+
+  /**
+   * Deletes a product for good: all its requests with their tasks and events,
+   * and its folder (files and Git history). productId null deletes every
+   * product and all recorded activity. A running workflow cannot be deleted.
+   * @returns {Promise<{ deletedWorkflows: string[] }>}
+   */
+  async deleteProduct(productId) {
+    if (productId != null && !this.repository.listProductWorkflows(productId).length) throw new NotFoundError('This product does not exist.');
+    const running = this.current && this.repository.getWorkflow(this.current.workflowId);
+    if (running && (productId == null || running.productId === productId)) {
+      throw new ConflictError(`"${running.title}" is still running. Wait for it to finish (or until it is blocked) before deleting it.`);
+    }
+    const deletedWorkflows = this.repository.deleteWorkflows(productId);
+    const folders = productId == null ? [join(this.dataDir, 'workflows')] : [join(this.dataDir, 'workflows', productId)];
+    for (const folder of folders) await rm(folder, { recursive: true, force: true });
+    for (const id of deletedWorkflows) this.gitNoticeSent.delete(id);
+    return { deletedWorkflows };
   }
 
   /** Abandons a blocked or interrupted workflow, freeing the workflow slot. */
@@ -421,7 +476,8 @@ export class Orchestrator {
 
   async #analysis(ctx) {
     const { workflow, agent, say } = ctx;
-    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes });
+    const base = workflow.state.base ?? null;
+    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base });
     this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
@@ -459,6 +515,8 @@ export class Orchestrator {
       detail: {
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
+        version: spec.version,
+        changes: spec.changes ?? null,
       },
     });
     say({
@@ -482,8 +540,10 @@ export class Orchestrator {
     const correcting = stage.id === 'correction';
     const defects = correcting ? (state.verification?.defects ?? []) : [];
 
-    const currentFiles = correcting ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/')) : [];
-    const result = await agent.implement({ spec: state.spec, attempt, defects, currentFiles });
+    const changing = Boolean(state.base);
+    const currentFiles =
+      correcting || changing ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/')) : [];
+    const result = await agent.implement({ spec: state.spec, attempt, defects, currentFiles, change: changing ? { previousSpec: state.base.spec } : null });
     this.#recordAiCalls(ctx, result.aiCalls);
     const written = await this.#writeFiles(ctx, result.files);
     say({ type: correcting ? 'dev.correction' : 'dev.implementation', status: 'success', summary: result.summary, detail: { attempt, files: written } });

@@ -127,7 +127,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       stages: STAGE_ORDER.map((id) => ({ id, title: STAGES[id].title, agent: STAGES[id].agent })),
       statusLabels: WORKFLOW_STATUS,
       requestLimits: REQUEST_LIMITS,
-      workflows: repository.listWorkflows({ limit: 25 }).map(({ state: _state, ...summary }) => summary),
+      workflows: repository.listWorkflows({ limit: 500 }).map(({ state: _state, ...summary }) => summary),
+      products: repository.listProducts(),
       focusWorkflowId: focus?.id ?? null,
       activeWorkflowId: repository.findActiveWorkflow()?.id ?? null,
       workspaceEvents: focus ? [] : repository.listWorkspaceEvents(),
@@ -145,6 +146,43 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     return { workflow, tasks: repository.listTasks(id), events: repository.listTimeline(id), product: { root, files } };
   }
 
+  /** A product's requirement versions: one per iteration whose PO analysis was agreed. */
+  function productDetail(productId) {
+    const workflows = repository.listProductWorkflows(productId);
+    if (!workflows.length) throw new HttpError(404, 'Product not found.');
+    const product = repository.listProducts().find((p) => p.id === productId);
+    return {
+      product,
+      iterations: workflows.map((w) => ({
+        workflowId: w.id,
+        requestText: w.requestText,
+        change: Boolean(w.state?.base),
+        baseVersion: w.state?.base?.version ?? null,
+        status: w.status,
+        verified: w.verified,
+        createdAt: w.createdAt,
+        finishedAt: w.finishedAt,
+        spec: w.state?.spec
+          ? {
+              version: w.state.spec.version ?? null,
+              title: w.state.spec.title,
+              requirements: w.state.spec.requirements,
+              acceptanceCriteria: w.state.spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
+              changes: w.state.spec.changes ?? null,
+            }
+          : null,
+      })),
+    };
+  }
+
+  async function deleteProduct(productId) {
+    const doomed = new Set(productId == null ? repository.listWorkflows({ limit: 1e9 }).map((w) => w.id) : repository.listProductWorkflows(productId).map((w) => w.id));
+    const previewed = preview.status().workflowId;
+    const result = await orchestrator.deleteProduct(productId);
+    if (previewed && doomed.has(previewed)) await preview.stop();
+    return result;
+  }
+
   const routes = [
     ['GET', /^\/api\/state$/, () => state()],
     ['GET', /^\/api\/workflows\/([\w-]+)$/, (_req, [id]) => workflowDetail(id)],
@@ -152,8 +190,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       'POST',
       /^\/api\/workflows$/,
       async (req) => {
-        const { request } = await readJsonBody(req);
-        const { workflow } = orchestrator.submit(request);
+        const { request, productId } = await readJsonBody(req);
+        const { workflow } = orchestrator.submit(request, { productId: productId || null });
         return [201, { workflow }];
       },
     ],
@@ -175,6 +213,18 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
           { projectId: params.get('project') || 'all', from, to },
           { recipes: catalogue([...orchestrator.recipes, AI_WEB_RECIPE]), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
         );
+      },
+    ],
+    ['GET', /^\/api\/products$/, () => repository.listProducts()],
+    ['GET', /^\/api\/products\/([\w-]+)$/, (_req, [id]) => productDetail(id)],
+    ['DELETE', /^\/api\/products\/([\w-]+)$/, (_req, [id]) => deleteProduct(id)],
+    [
+      'DELETE',
+      /^\/api\/products$/,
+      (req) => {
+        // Deleting everything must be asked for explicitly.
+        if (new URL(req.url, 'http://localhost').searchParams.get('confirm') !== 'all') throw new HttpError(400, 'Add ?confirm=all to delete every product.');
+        return deleteProduct(null);
       },
     ],
     ['GET', /^\/api\/ai$/, () => aiSettings.status()],

@@ -8,6 +8,8 @@ import { catalogue, normalizeRequest } from '../recipes/index.js';
  * @property {string} requestText
  * @property {string[]} requirements
  * @property {Array<{ id: string, description: string, check: object }>} acceptanceCriteria
+ * @property {number} [version]  1 for a new product, +1 for each change request
+ * @property {string[]} [changes]  what a change request added, changed or removed
  */
 
 function listOf(items) {
@@ -53,14 +55,25 @@ export class ProductOwnerAgent extends ScriptedAgent {
   /**
    * Matches the request against the recipe catalogue.
    *
-   * @param {{ requestText: string, recipes: object[] }} input
+   * @param {{ requestText: string, recipes: object[], current?: { spec: Spec, version: number } | null }} input
    * @returns {{ status: 'ready', spec: Spec, summary: string, handoffMessage: string, document: object }
    *         | { status: 'needs_clarification', reason: 'unsupported' | 'ambiguous', summary: string,
    *             message: string, supported: object[] }}
    */
-  analyse({ requestText, recipes }) {
+  analyse({ requestText, recipes, current = null }) {
     const normalized = normalizeRequest(requestText);
     const supported = catalogue(recipes);
+    if (current) {
+      return {
+        status: 'needs_clarification',
+        reason: 'unsupported',
+        supported,
+        summary: 'The scripted PO cannot change an existing product.',
+        message:
+          `I am the scripted PO: I only match new requests against fixed recipes, so I cannot change "${current.spec.title}". ` +
+          'Switch the PO and the Developer to AI-powered on the Team page and submit the change again, or start a new product.',
+      };
+    }
     const supportedList = supported.map((r) => `"${r.title}"`).join(', ');
     const example = supported[0]?.examples[0];
 
@@ -98,6 +111,7 @@ export class ProductOwnerAgent extends ScriptedAgent {
       requestText,
       requirements: [...recipe.requirements],
       acceptanceCriteria: recipe.acceptanceCriteria.map((c) => ({ ...c, check: { ...c.check } })),
+      version: 1,
     };
     return {
       status: 'ready',

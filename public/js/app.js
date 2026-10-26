@@ -2,17 +2,23 @@
 // actions. Plain browser JavaScript modules, no build step; kept to
 // features available in Safari 16 and Chrome on macOS 11.
 
-import { dateTime, duration, h, icon, mount } from './dom.js';
-import { renderResults, renderTeam, renderTimeline, statusLabel, verificationBadge } from './views.js';
+import { h, icon, mount } from './dom.js';
+import { renderResults, renderTeam, renderTimeline } from './views.js';
 import * as ws from './workspace.js';
 import { analyticsQuery, mountAnalytics, renderAnalytics } from './analytics.js';
 import { mountAiPanel, renderAiStatus } from './aiPanel.js';
+import { mountProjects, mountRequirements, renderProjects, renderRequirements } from './products.js';
 
 const ui = {
   route: 'home',
   mountedRoute: null,
   selectedId: null,
   pinned: false, // true when the user picked an older workflow in Projects
+  blank: false, // true after "New request": an empty workspace for a new product
+  targetProductId: null, // the product the next request changes; null = a new product
+  deleting: null, // product id being deleted ('*' for all)
+  requirementsProductId: null,
+  requirements: null,
   draft: '',
   submitting: false,
   feedback: null,
@@ -66,12 +72,17 @@ async function refresh() {
   refreshing = true;
   try {
     state = await api('/api/state');
-    if (!ui.pinned || !state.workflows.some((w) => w.id === ui.selectedId)) {
+    if (ui.targetProductId && !state.products.some((p) => p.id === ui.targetProductId)) ui.targetProductId = null;
+    if (ui.blank) {
+      ui.selectedId = null;
+      ui.pinned = false;
+    } else if (!ui.pinned || !state.workflows.some((w) => w.id === ui.selectedId)) {
       ui.selectedId = state.focusWorkflowId;
       ui.pinned = false;
     }
     detail = ui.selectedId ? await api(`/api/workflows/${ui.selectedId}`) : null;
     if (ui.route === 'analytics') await loadAnalytics();
+    if (ui.route === 'requirements') await loadRequirements();
     showError(null);
     render();
   } catch (error) {
@@ -109,8 +120,9 @@ const actions = {
       const { workflow } = await api('/api/workflows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request: text }),
+        body: JSON.stringify({ request: text, productId: ui.targetProductId }),
       });
+      ui.blank = false;
       ui.draft = '';
       const input = document.getElementById('request-input');
       if (input) input.value = '';
@@ -215,7 +227,69 @@ const actions = {
     render();
   },
 
+  /** An empty workspace for a new product (the "New request" button). */
+  newProduct() {
+    ui.blank = true;
+    ui.targetProductId = null;
+    ui.feedback = null;
+    if (ui.route !== 'home') location.hash = '#/';
+    refresh();
+  },
+
+  /** Prepares a change request for a product and shows its latest request. */
+  startChange(productId) {
+    const product = state.products.find((p) => p.id === productId);
+    if (!product) return;
+    ui.targetProductId = productId;
+    ui.blank = false;
+    ui.feedback = null;
+    ui.pinned = product.latestWorkflowId !== state.focusWorkflowId;
+    ui.selectedId = product.latestWorkflowId;
+    if (ui.route !== 'home') location.hash = '#/';
+    refresh().then(() => {
+      const input = document.getElementById('request-input');
+      if (input) input.focus();
+    });
+  },
+
+  setTarget(productId) {
+    if (productId) actions.startChange(productId);
+    else actions.newProduct();
+  },
+
+  async deleteProduct(productId) {
+    const product = productId && state.products.find((p) => p.id === productId);
+    const question = product
+      ? `Delete "${product.title}" for good?\n\nThis removes its ${product.iterations} request(s), their conversation and activity, its statistics, and its files and Git history. This cannot be undone.`
+      : `Delete ALL ${state.products.length} products for good?\n\nThis removes every request, all recorded activity and statistics, and all generated files. This cannot be undone.`;
+    if (!window.confirm(question)) return;
+    ui.deleting = productId || '*';
+    render();
+    try {
+      await api(productId ? `/api/products/${productId}` : '/api/products?confirm=all', { method: 'DELETE' });
+      if (!productId || ui.targetProductId === productId) ui.targetProductId = null;
+      if (!productId || ui.requirementsProductId === productId) {
+        ui.requirementsProductId = null;
+        ui.requirements = null;
+      }
+      if (!productId) ui.blank = false;
+    } catch (error) {
+      showError(`Could not delete: ${error.message}`);
+    } finally {
+      ui.deleting = null;
+      await refresh();
+    }
+  },
+
+  openRequirements(productId) {
+    ui.requirementsProductId = productId;
+    ui.requirements = null;
+    if (ui.route !== 'requirements') location.hash = '#/requirements';
+    else refresh();
+  },
+
   select(workflowId) {
+    ui.blank = false;
     if (!workflowId || (state && workflowId === state.focusWorkflowId)) {
       ui.pinned = false;
       ui.selectedId = state ? state.focusWorkflowId : null;
@@ -248,6 +322,13 @@ async function loadAnalytics() {
   } catch (error) {
     ui.analyticsError = error.message;
   }
+}
+
+async function loadRequirements() {
+  if (!ui.requirementsProductId || !state.products.some((p) => p.id === ui.requirementsProductId)) {
+    ui.requirementsProductId = (detail && detail.workflow.productId) || (state.products[0] && state.products[0].id) || null;
+  }
+  ui.requirements = ui.requirementsProductId ? await api(`/api/products/${ui.requirementsProductId}`) : null;
 }
 
 async function previewAction(path, body) {
@@ -300,7 +381,10 @@ function mountRoute() {
       mountAiPanel(state, actions);
       break;
     case 'projects':
-      ws.mountSection('Projects', 'Every workflow you have started, newest first. Select one to inspect it.', 'projects', 'ol', 'project-list');
+      mountProjects(actions);
+      break;
+    case 'requirements':
+      mountRequirements(state, ui, actions);
       break;
     case 'activity':
       ws.mountSection('Team Activity', 'Everything recorded for the workflow shown in the project header, with evidence.', 'timeline', 'ol', 'timeline');
@@ -310,46 +394,13 @@ function mountRoute() {
       break;
     case 'repository':
       ws.mountSection('Repository', 'The generated product: files read from disk, test results and Git commits.', 'results', 'div', 'results');
+      document.querySelector('.view-head').appendChild(
+        h('button', { id: 'repo-delete', type: 'button', className: 'btn btn-sm btn-danger', onclick: () => detail && actions.deleteProduct(detail.workflow.productId) }, 'Delete this product'),
+      );
       break;
     default:
       break;
   }
-}
-
-function renderProjects() {
-  if (!state.workflows.length) {
-    mount('projects', h('li', { className: 'empty' }, 'No workflows yet. Start one from Home.'));
-    return;
-  }
-  mount(
-    'projects',
-    state.workflows.map((wf) =>
-      h(
-        'li',
-        null,
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'project-item',
-            'aria-current': wf.id === ui.selectedId ? 'true' : 'false',
-            onclick: () => {
-              actions.select(wf.id);
-              location.hash = '#/';
-            },
-          },
-          h(
-            'span',
-            null,
-            h('strong', null, wf.title),
-            h('span', { className: 'muted small', style: 'display:block' }, `“${wf.requestText}”`),
-            h('span', { className: 'muted small', style: 'display:block' }, `${dateTime(wf.createdAt)}${wf.finishedAt ? ` · took ${duration(new Date(wf.finishedAt) - new Date(wf.createdAt))}` : ''} · ${wf.id}`),
-          ),
-          h('span', { className: 'badges' }, h('span', { className: 'status-pill', dataset: { status: wf.status } }, statusLabel(state, wf.status)), verificationBadge(wf)),
-        ),
-      ),
-    ),
-  );
 }
 
 function render() {
@@ -372,13 +423,18 @@ function render() {
       renderAiStatus(state, ui);
       break;
     case 'projects':
-      renderProjects();
+      renderProjects(state, ui, actions);
+      break;
+    case 'requirements':
+      renderRequirements(state, ui, actions);
       break;
     case 'activity':
       renderTimeline(state, detail, ui);
       break;
     case 'repository':
       renderResults(state, detail, ui);
+      document.getElementById('repo-delete').hidden = !detail;
+      document.getElementById('repo-delete').disabled = ui.deleting !== null || (detail && detail.workflow.status === 'running');
       break;
     case 'analytics':
       renderAnalytics(ui.analytics, ui);
@@ -398,14 +454,12 @@ function routeFromHash() {
 window.addEventListener('hashchange', () => {
   ui.route = routeFromHash();
   render();
-  if (ui.route === 'analytics') refresh();
+  if (ui.route === 'analytics' || ui.route === 'requirements') refresh();
   document.getElementById('view').focus({ preventScroll: true });
 });
 
 document.getElementById('new-request').addEventListener('click', () => {
-  ui.feedback = null;
-  if (ui.pinned) actions.select(null);
-  if (ui.route !== 'home') location.hash = '#/';
+  actions.newProduct();
   setTimeout(() => {
     const input = document.getElementById('request-input');
     if (input) {

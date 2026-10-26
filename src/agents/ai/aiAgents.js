@@ -61,13 +61,24 @@ export class AiProductOwnerAgent extends Agent {
     this.rules = scripted;
   }
 
-  async analyse({ requestText }) {
+  async analyse({ requestText, current = null }) {
     const system = [
       'You are the Product Owner (PO) of a small software team.',
       PRODUCT_SCOPE,
-      'Read the user\'s request and decide:',
-      '- If it can be built as such a static web page and is clear enough, answer with status "ready".',
-      '- If it cannot be built that way, or an essential detail is missing or contradictory, answer with status "needs_clarification" and ask one clear question.',
+      ...(current
+        ? [
+            'The product already exists. You receive its current requirements and acceptance criteria, and a change request from the user.',
+            'Apply the change request to the current requirements:',
+            '- Keep every current requirement and criterion that the change does not touch, unchanged.',
+            '- Modify the ones the change affects, remove the ones it contradicts, and add new ones for what it asks.',
+            '- Return the COMPLETE updated lists (not only the changes), and list what you did in "changes", e.g. "Changed: the text colour is now blue (was red)".',
+            '- If the change request is unclear, or cannot be built as such a static web page, answer with status "needs_clarification".',
+          ]
+        : [
+            'Read the user\'s request and decide:',
+            '- If it can be built as such a static web page and is clear enough, answer with status "ready".',
+            '- If it cannot be built that way, or an essential detail is missing or contradictory, answer with status "needs_clarification" and ask one clear question.',
+          ]),
       'Rules for "ready":',
       '- Turn EVERY concrete detail the user asked for (texts, colours, layout, behaviour) into its own acceptance criterion. Do not drop details.',
       '- Do not add requirements the user did not ask for.',
@@ -76,11 +87,28 @@ export class AiProductOwnerAgent extends Agent {
       '- Every acceptance criterion needs a machine-checkable "check" of one of these types (nothing else is allowed):',
       ...Object.values(WEB_CHECK_TYPES).map((t) => `  * ${t}`),
       'Answer with a JSON object only, in this shape:',
-      '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"handoffMessage":"message to the Developer"}',
+      current
+        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"handoffMessage":"message to the Developer"}'
+        : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"handoffMessage":"message to the Developer"}',
       'or {"status":"needs_clarification","reason":"ambiguous" | "unsupported","message":"your question to the user"}',
     ].join('\n');
+    const user = current
+      ? JSON.stringify(
+          {
+            currentRequirements: { version: current.version, title: current.spec.title, requirements: current.spec.requirements, acceptanceCriteria: current.spec.acceptanceCriteria },
+            changeRequest: requestText,
+          },
+          null,
+          2,
+        )
+      : `User request:\n${requestText}`;
 
-    const { value, aiCalls } = await askWithContract(this.getClient, { system, user: `User request:\n${requestText}`, validate: validatePoReply, purpose: 'analyse the request' });
+    const { value, aiCalls } = await askWithContract(this.getClient, {
+      system,
+      user,
+      validate: validatePoReply,
+      purpose: current ? 'apply the change request to the requirements' : 'analyse the request',
+    });
 
     if (value.status === 'needs_clarification') {
       return {
@@ -98,6 +126,8 @@ export class AiProductOwnerAgent extends Agent {
       requestText,
       requirements: value.requirements,
       acceptanceCriteria: value.acceptanceCriteria,
+      version: (current?.version ?? 0) + 1,
+      ...(current ? { changes: value.changes ?? [] } : {}),
     };
     return {
       status: 'ready',
@@ -121,10 +151,11 @@ export class AiProductOwnerAgent extends Agent {
 
 function requirementsMarkdown(spec) {
   return [
-    `# Requirements: ${spec.title}`,
+    `# Requirements: ${spec.title} (version ${spec.version})`,
     '',
-    `Original request: "${spec.requestText}"`,
+    spec.changes ? `Change request: "${spec.requestText}"` : `Original request: "${spec.requestText}"`,
     '',
+    ...(spec.changes ? ['## Changes in this version', '', ...(spec.changes.length ? spec.changes.map((c) => `- ${c}`) : ['- (none listed)']), ''] : []),
     '## Requirements',
     '',
     ...spec.requirements.map((r, i) => `${i + 1}. ${r}`),
@@ -154,12 +185,15 @@ export class AiDeveloperAgent extends Agent {
     this.getClient = getClient;
   }
 
-  async implement({ spec, attempt, defects = [], currentFiles = [] }) {
+  async implement({ spec, attempt, defects = [], currentFiles = [], change = null }) {
     const correcting = defects.length > 0;
     const system = [
       'You are the Developer of a small software team.',
       PRODUCT_SCOPE,
       'Implement the requirements so that every acceptance criterion passes. QA will check them with automated tests based on each criterion\'s "check".',
+      ...(change && !correcting
+        ? ['The product already exists: you receive its current files and the updated requirements. Change the existing files so the product meets the updated requirements, and keep everything else as it is. Return the complete content of every file you change, and always index.html; files you do not return stay as they are.']
+        : []),
       'Rules:',
       '- The entry page is index.html. Use only relative paths. At most 8 files. Allowed extensions: .html .css .js .svg .md .json .txt.',
       '- Do not write files in the test/ folder: it belongs to QA.',
@@ -175,6 +209,7 @@ export class AiDeveloperAgent extends Agent {
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria,
         attempt,
+        ...(change && !correcting ? { changesToRequirements: spec.changes ?? [], currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })) } : {}),
         ...(correcting ? { defectsReportedByQA: defects, currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })) } : {}),
       },
       null,
@@ -183,9 +218,13 @@ export class AiDeveloperAgent extends Agent {
 
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
-      user: correcting ? `Fix the defects reported by QA. Return the complete corrected files.\n${user}` : `Implement this:\n${user}`,
+      user: correcting
+        ? `Fix the defects reported by QA. Return the complete corrected files.\n${user}`
+        : change
+          ? `Change the existing product to meet the updated requirements:\n${user}`
+          : `Implement this:\n${user}`,
       validate: validateDevReply,
-      purpose: correcting ? 'fix the reported defects' : 'implement the requirements',
+      purpose: correcting ? 'fix the reported defects' : change ? 'implement the change request' : 'implement the requirements',
     });
     return {
       files: value.files,

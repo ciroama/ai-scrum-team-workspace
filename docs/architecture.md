@@ -97,9 +97,38 @@ The conversation on the Home page shows the communication events (request,
 PO outputs, handoffs, Developer and QA results, review, workflow notes). The
 Team Activity page shows everything with evidence.
 
+## Products, change requests and deletion
+
+A **product** groups the requests (workflows) that built and changed it.
+Schema v4 adds `workflows.product_id`; a product is identified by the id of
+its first workflow, so earlier databases migrate by setting
+`product_id = id` (each old workflow becomes a one-iteration product), and no
+folders move.
+
+- **Change request:** `POST /api/workflows { request, productId }`. The
+  orchestrator takes the product's latest agreed requirements (the latest
+  workflow with a `spec`) as `state.base` and records it on
+  `request.submitted`. The AI PO receives those requirements plus the change
+  and returns the complete updated list with `changes` ("Added/Changed/
+  Removed: …"); the spec gets `version = base + 1`. The AI Developer
+  receives the current files and the updated requirements. All iterations
+  share the product folder and its Git repository, so each iteration adds
+  commits, and QA regenerates its acceptance tests from the full updated
+  criteria, which re-checks the old ones too. The scripted PO answers a
+  change request with an honest "needs clarification": it only matches new
+  requests against recipes.
+- **Requirements page:** `GET /api/products/:id` returns every iteration
+  with its agreed requirements, version and changes.
+- **Deletion is permanent:** `DELETE /api/products/:id` deletes the product's
+  workflows, tasks and events in one transaction and removes
+  `data/workflows/<productId>/` (files and Git history), and stops its Live
+  Preview. Its statistics disappear with it. `DELETE /api/products?confirm=all`
+  deletes everything, including workspace-level events. A product with a
+  running workflow cannot be deleted (409).
+
 ## Product repository isolation
 
-Products live in `data/workflows/<id>/product/`, inside the dashboard
+Products live in `data/workflows/<product id>/product/`, inside the dashboard
 folder's Git-ignored `data/` directory. `src/actions/git.js` runs every Git
 command with explicit `--git-dir=<product>/.git --work-tree=<product>` and
 removes inherited `GIT_*` variables, so Git never searches parent folders and
@@ -210,13 +239,17 @@ The first AI integration used GitHub Models. That service was retired on
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/state` | agents (config + activity), recipes, stages, workflows, git status |
-| POST | `/api/workflows` | `{ "request": "..." }` → 201, or 400 (invalid) / 409 (busy) |
+| POST | `/api/workflows` | `{ "request": "...", "productId"?: "..." }` → 201, or 400 (invalid) / 404 (no such product) / 409 (busy) |
 | GET | `/api/workflows/:id` | workflow, tasks, timeline, product files read from disk |
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
 | PUT | `/api/agents/:id` | `{ "enabled": true \| false, "mode": "scripted" \| "ai" }` |
 | GET / PUT | `/api/ai` | AI provider status / `{ "model": "sonnet" }` ("" restores the default) |
 | POST | `/api/ai/test` | send one real test request to Claude Code |
+| GET | `/api/products` | products with iteration and version counts |
+| GET | `/api/products/:id` | a product's iterations with their requirements versions |
+| DELETE | `/api/products/:id` | delete a product for good (requests, activity, files) |
+| DELETE | `/api/products?confirm=all` | delete every product and all activity |
 | GET | `/api/preview` | Live Preview status |
 | POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
 | POST | `/api/preview/refresh` | re-check (and reload) the current preview |

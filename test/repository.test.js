@@ -60,3 +60,18 @@ test('a Milestone 1 database is kept as a backup, not deleted or migrated', asyn
   backup.close();
   assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'workflows'`).get());
 });
+
+test('workflows from an earlier schema become one-iteration products', async (t) => {
+  const file = join(await tempDir(t), 'workspace.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE workflows (id TEXT PRIMARY KEY, request_text TEXT NOT NULL, recipe_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL,
+    stage TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 0, blocked_reason TEXT, error TEXT, state TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)`);
+  old.prepare(`INSERT INTO workflows VALUES ('wf-old', 'Build it', 'hello-world', 'Hello World', 'completed', 'review', 1, NULL, NULL, '{"spec":{"title":"Hello World"}}', '2026-01-01', '2026-01-01', '2026-01-01')`).run();
+  old.close();
+  const { db } = openDatabase(file);
+  const repo = new Repository(db);
+  assert.equal(repo.getWorkflow('wf-old').productId, 'wf-old');
+  assert.deepEqual(repo.listProducts().map((p) => [p.id, p.title, p.iterations, p.versions]), [['wf-old', 'Hello World', 1, 1]]);
+  db.close();
+});

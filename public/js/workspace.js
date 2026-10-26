@@ -19,6 +19,7 @@ import {
 export const ROUTES = [
   { id: 'home', label: 'Home', icon: 'home', hash: '#/' },
   { id: 'projects', label: 'Projects', icon: 'folder', hash: '#/projects' },
+  { id: 'requirements', label: 'Requirements', icon: 'analysis', hash: '#/requirements' },
   { id: 'team', label: 'Team', icon: 'team', hash: '#/team' },
   { id: 'activity', label: 'Team Activity', icon: 'activity', hash: '#/activity' },
   { id: 'repository', label: 'Repository', icon: 'repository', hash: '#/repository' },
@@ -152,7 +153,17 @@ export function mountHome(ui, actions) {
           },
         },
         h('h2', { id: 'composer-heading', className: 'sr-only' }, 'What would you like to build?'),
-        h('label', { className: 'muted small', for: 'request-input', style: 'display:block;margin-bottom:6px;font-weight:600;color:var(--text-soft)' }, 'What would you like to build?'),
+        h(
+          'div',
+          { className: 'composer-target' },
+          h('label', { className: 'muted small', for: 'request-input', style: 'font-weight:600;color:var(--text-soft)' }, 'What would you like to build?'),
+          h(
+            'label',
+            { className: 'product-picker' },
+            h('span', { className: 'muted small' }, 'For'),
+            h('select', { id: 'product-target', 'aria-label': 'New product or change to an existing product', onchange: (e) => actions.setTarget(e.target.value || null) }),
+          ),
+        ),
         h(
           'div',
           { className: 'composer-box' },
@@ -242,7 +253,7 @@ function conversationItems(state, detail, ui, actions) {
             'li',
             { className: 'msg msg-user' },
             avatarFor('user'),
-            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', null, d.requestText)),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), d.baseVersion ? h('p', { className: 'muted small' }, `Change request on requirements v${d.baseVersion}`) : null, h('p', null, d.requestText)),
           ),
         );
         break;
@@ -368,11 +379,30 @@ export function renderComposer(state, ui, actions) {
   const active = state.workflows.find((w) => w.id === state.activeWorkflowId);
   input.disabled = ui.submitting;
   button.disabled = ui.submitting || Boolean(active);
-  button.firstChild.textContent = ui.submitting ? 'Starting…' : 'Start workflow';
+
+  const target = state.products.find((p) => p.id === ui.targetProductId) || null;
+  mount(
+    'product-target',
+    h('option', { value: '', selected: !target }, 'A new product'),
+    state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id, selected: target && p.id === target.id }, `Change: ${p.title} (v${p.versions})`)),
+  );
+  input.placeholder = target
+    ? `Describe the change to "${target.title}", e.g. "Make the text blue" or "Add a button that…"`
+    : 'Describe what you would like to build, e.g. "Build a simple Hello World web application."';
+  button.firstChild.textContent = ui.submitting ? 'Starting…' : target ? 'Request change' : 'Start workflow';
 
   const anyAi = state.agents.some((a) => a.mode === 'ai');
   mount('workspace-kind', anyAi ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
   const poAi = state.agents.some((a) => a.id === 'po' && a.mode === 'ai');
+  if (target) {
+    mount(
+      'supported',
+      poAi
+        ? `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
+        : 'Change requests need the PO and the Developer in AI-powered mode (Team page).',
+    );
+    return finishComposer(state, ui, active);
+  }
   if (poAi) {
     mount('supported', 'The PO is AI-powered: describe any static web page (HTML, CSS, JavaScript).');
     return finishComposer(state, ui, active);

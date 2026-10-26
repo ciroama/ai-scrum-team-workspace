@@ -6,7 +6,7 @@ import { startServer } from '../src/server/app.js';
 import { ClaudeCodeClient, parseJsonReply } from '../src/ai/claudeCode.js';
 import { validateDevReply, validatePoReply } from '../src/ai/contracts.js';
 import { computeAnalytics } from '../src/analytics/analytics.js';
-import { tempDir } from './helpers.js';
+import { gitAvailable, tempDir } from './helpers.js';
 
 const REQUEST = 'create a web page with background green and font red. The phrase in the center of page "hello world"';
 
@@ -308,4 +308,101 @@ test('contracts reject unsafe or unverifiable model output', () => {
   assert.throws(() => validateDevReply(file('app.js', '<script src="https://cdn.example.com/x.js"></script>')), /external resources/);
   assert.throws(() => validateDevReply({ files: [{ path: 'page.html', content: 'x' }] }), /index.html is required/);
   assert.equal(validateDevReply(file('app.js', 'console.log(1)')).files.length, 2);
+});
+
+test('a change request builds on the current requirements and files of the same product', async (t) => {
+  const changed = {
+    ...PO_SPEC,
+    changes: ['Changed: the text colour is now blue (was red).'],
+    requirements: ['The page background is green.', 'The text is blue.', 'The phrase "hello world" is shown in the centre of the page.'],
+    acceptanceCriteria: PO_SPEC.acceptanceCriteria.map((c) => (c.check.property === 'color' ? { description: 'The text is blue.', check: { type: 'cssProperty', property: 'color', value: 'blue' } } : c)),
+  };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, { content: changed }, { content: { ...page('blue'), summary: 'Changed the colour.' } }]);
+  const { workflow: first } = await run(app);
+  assert.equal(first.status, 'completed');
+
+  const { workflow: cr, done } = app.orchestrator.submit('make the text blue', { productId: first.productId });
+  await done;
+  const second = app.repository.getWorkflow(cr.id);
+  assert.equal(second.status, 'completed');
+  assert.equal(second.productId, first.id, 'the change belongs to the same product');
+  assert.equal(second.state.spec.version, 2);
+  assert.deepEqual(second.state.spec.changes, ['Changed: the text colour is now blue (was red).']);
+
+  // The PO received the current requirements, the Developer the current files.
+  const received = await claude.received();
+  const poInput = JSON.parse(received[2].stdin);
+  assert.equal(poInput.changeRequest, 'make the text blue');
+  assert.equal(poInput.currentRequirements.version, 1);
+  assert.ok(poInput.currentRequirements.requirements.includes('The text is red.'));
+  assert.match(option(received[2].args, '--system-prompt'), /The product already exists/);
+  const devInput = JSON.parse(received[3].stdin.split('\n').slice(1).join('\n'));
+  assert.ok(devInput.currentFiles.some((f) => f.path === 'index.html' && f.content.includes('hello world')));
+
+  // Same folder and Git repository, with the history of both iterations;
+  // QA re-ran every criterion against the changed product.
+  assert.equal(app.orchestrator.productDir(cr.id), app.orchestrator.productDir(first.id));
+  const files = (await app.orchestrator.listProductFiles(cr.id)).files;
+  assert.match(files.find((f) => f.path === 'index.html').content, /hello world/);
+  assert.match(files.find((f) => f.path === 'style.css').content, /color: blue/);
+  assert.match(files.find((f) => f.path === 'REQUIREMENTS.md').content, /version 2[\s\S]*Changes in this version[\s\S]*now blue/);
+  const results = app.repository.listEvents(cr.id).find((e) => e.type === 'test.results').detail.summary;
+  assert.equal(results.pass, 5);
+  if (await gitAvailable()) {
+    const commits = [first.id, cr.id].flatMap((id) => app.repository.listEvents(id).filter((e) => e.type === 'git.commit'));
+    assert.equal(new Set(commits.map((e) => e.detail.repository)).size, 1);
+    assert.ok(commits.length >= 4);
+  }
+
+  const detail = await (await fetch(`${app.url}/api/products/${first.id}`)).json();
+  assert.equal(detail.product.iterations, 2);
+  assert.deepEqual(detail.iterations.map((i) => [i.change, i.spec.version]), [[false, 1], [true, 2]]);
+});
+
+test('the scripted PO refuses change requests honestly; unknown products are rejected', async (t) => {
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }]);
+  const { workflow } = await run(app);
+  await fetch(`${app.url}/api/agents/po`, json('PUT', { mode: 'scripted' }));
+  const { workflow: cr, done } = app.orchestrator.submit('make the text blue', { productId: workflow.productId });
+  await done;
+  const result = app.repository.getWorkflow(cr.id);
+  assert.equal(result.status, 'needs_clarification');
+  assert.match(app.repository.listEvents(cr.id).find((e) => e.type === 'po.clarification').summary, /scripted PO.*cannot change "Green hello world page"/);
+
+  const res = await fetch(`${app.url}/api/workflows`, json('POST', { request: 'make it blue', productId: 'wf-missing' }));
+  assert.equal(res.status, 404);
+});
+
+test('deleting a product removes its requests, events, statistics and files for good', async (t) => {
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, { content: PO_SPEC }, { content: page('red') }]);
+  const { workflow: keep } = await run(app);
+  const { workflow: doomed } = await run(app);
+  const dir = app.orchestrator.productDir(doomed.id);
+  const preview = await (await fetch(`${app.url}/api/preview`, json('POST', { workflowId: doomed.id }))).json();
+  assert.equal(preview.status, 'running');
+
+  const res = await fetch(`${app.url}/api/products/${doomed.productId}`, { method: 'DELETE' });
+  assert.equal(res.status, 200);
+  assert.ok(!app.repository.getWorkflow(doomed.id));
+  assert.equal(app.repository.listEvents(doomed.id).length, 0);
+  assert.equal(app.repository.listTasks(doomed.id).length, 0);
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync(dir), false, 'the product folder is gone');
+  assert.equal(existsSync(app.orchestrator.productDir(keep.id)), true, 'other products are untouched');
+  assert.equal((await (await fetch(`${app.url}/api/preview`)).json()).status, 'not_started', 'its preview was stopped');
+  assert.deepEqual(app.repository.analyticsSource().workflows.map((w) => w.id), [keep.id]);
+  assert.equal((await fetch(`${app.url}/api/products/${doomed.productId}`, { method: 'DELETE' })).status, 404);
+
+  assert.equal((await fetch(`${app.url}/api/products`, { method: 'DELETE' })).status, 400, 'deleting everything needs confirmation');
+  assert.equal((await fetch(`${app.url}/api/products?confirm=all`, { method: 'DELETE' })).status, 200);
+  const state = await (await fetch(`${app.url}/api/state`)).json();
+  assert.deepEqual([state.workflows.length, state.products.length, state.focusWorkflowId], [0, 0, null]);
+});
+
+test('a running workflow cannot be deleted', async (t) => {
+  const { app } = await aiApp(t, [{ sleepMs: 1500 }]);
+  const { workflow, done } = app.orchestrator.submit(REQUEST);
+  const res = await fetch(`${app.url}/api/products/${workflow.productId}`, { method: 'DELETE' });
+  assert.equal(res.status, 409);
+  await done;
 });

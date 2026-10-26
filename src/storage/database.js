@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_config (
@@ -92,6 +92,14 @@ function migrate(db) {
   const agentColumns = db.prepare('PRAGMA table_info(agent_config)').all().map((c) => c.name);
   // v3: how each agent decides: 'scripted' (rules) or 'ai' (model-backed).
   if (!agentColumns.includes('mode')) db.exec(`ALTER TABLE agent_config ADD COLUMN mode TEXT NOT NULL DEFAULT 'scripted'`);
+
+  // v4: workflows belong to a product. A product is identified by the id of
+  // its first workflow, whose folder holds the product files, so earlier
+  // workflows simply become one-iteration products.
+  const workflowColumns = db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name);
+  if (!workflowColumns.includes('product_id')) db.exec('ALTER TABLE workflows ADD COLUMN product_id TEXT');
+  db.exec('UPDATE workflows SET product_id = id WHERE product_id IS NULL');
+  db.exec('CREATE INDEX IF NOT EXISTS workflows_by_product ON workflows (product_id, created_at)');
 }
 
 /**

@@ -109,6 +109,7 @@ export function validatePoReply(reply) {
     acceptanceCriteria,
     summary: isText(reply.summary, 500) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
+    changes: Array.isArray(reply.changes) ? reply.changes.filter((c) => isText(c, 500)).map((c) => c.trim()).slice(0, 20) : null,
   };
 }
 

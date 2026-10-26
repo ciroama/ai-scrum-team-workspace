@@ -99,11 +99,39 @@ The generated product is a static web page (`index.html`, `app.js`,
   output, test results, defects, commits, configuration changes.
 - **Repository** — the result: outcome, acceptance criteria, test results,
   open issues, generated files (read from disk) and Git commits.
-- **Projects** — all workflows, newest first.
+- **Projects** — every product with its requests (the first one and each
+  change request). From here you open a request, see the requirements,
+  request a change, or **delete** a product. **Delete all products** resets
+  the workspace.
+- **Requirements** — the requirements and acceptance criteria the PO agreed,
+  version by version, with what each change request added, changed or
+  removed.
 - **Live Preview** (right column) — the generated product running locally,
   shown in the dashboard. See below.
 - **Analytics** — statistics calculated from recorded data, with a project
   filter and an optional date range. See below.
+
+### New products and change requests
+
+Under the request box, **For** chooses what the request is for:
+
+- **A new product** — the team starts from scratch in a new folder. The
+  **New request** button clears the workspace for this.
+- **Change: <product>** — a change request (CR) to an existing product. The
+  PO starts from the product's current requirements and writes the next
+  version; the Developer changes the existing files; QA re-checks **every**
+  acceptance criterion, old and new. The product keeps one folder and one
+  Git repository, with a commit for every iteration. Change requests need
+  the PO and the Developer in AI-powered mode: the scripted PO only
+  recognises new Hello World requests, and says so.
+
+### Deleting
+
+Deleting a product (Projects or Repository page) removes, **for good**, its
+requests, their conversation and Team Activity, its statistics in Analytics,
+and its files with their Git history. A product whose request is running
+cannot be deleted until it finishes or is blocked. You are always asked to
+confirm.
 
 ### Live Preview
 
