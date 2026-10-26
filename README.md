@@ -394,5 +394,6 @@ your subscription's usage limits.
 
 ## License
 
-© Ciro Amati. All rights reserved. The code is shared for reference only;
-no license is granted to copy, modify or reuse it.
+[MIT](LICENSE) © 2026 Ciro Amati. You may use, copy, modify and share the
+code, as long as you keep the copyright and license notice. It comes with
+no warranty.

@@ -4,7 +4,7 @@
   "description": "A local-first AI Scrum Team Workspace with real agent orchestration and execution tracking.",
   "private": true,
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22.13.0 <23"
   },
