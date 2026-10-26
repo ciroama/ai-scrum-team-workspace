@@ -33,7 +33,7 @@ Browser (public/)                         Node.js server (src/)
   cancel blocked workflows.
 - **PO, Developer, QA**: the three agents. Each is `AgentKind.SCRIPTED` by
   default. The PO and the Developer can be switched to `AgentKind.AI`
-  (GitHub Models); QA is always scripted.
+  (Claude Code); QA is always scripted.
 - **Orchestrator**: infrastructure. It makes no product decisions.
 
 ## Agent contracts (structured inputs and outputs)
@@ -161,15 +161,25 @@ statistic below was already derivable from what the workspace records.
   red `#dc4a4f`). Every bar is labelled with text and value, and has a hover
   tooltip.
 
-## AI-powered agents (GitHub Models)
+## AI-powered agents (Claude Code)
 
-- `src/ai/githubModels.js` is a minimal client for the OpenAI-compatible
-  GitHub Models endpoint (`https://models.github.ai/inference/chat/completions`,
-  bearer token with `models:read`, JSON responses). Errors are typed as
-  `AiUnavailableError` (`not_configured`, `auth`, `rate_limit`, `network`,
-  `http`, `invalid_response`).
-- `src/ai/aiSettings.js` keeps the token and model in the local `settings`
-  table, and offers a connection test. The API never returns the token.
+The first AI integration used GitHub Models. That service was retired on
+30 July 2026, so it was removed; any token it stored is deleted on start.
+
+- `src/ai/claudeCode.js` runs the locally installed Claude Code once per
+  request: `claude -p --output-format json --model <model> --system-prompt
+  <...> --tools "" --strict-mcp-config --no-session-persistence`, with the
+  user message on stdin, in an empty temporary folder. With no tools the
+  model can only answer with text. Claude Code uses its own login (for
+  example a Claude Pro subscription). `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN` are removed from the child environment, so a key in
+  the environment can never turn this into paid API usage. The reply's
+  `result`, `modelUsage` (model name), `usage` (tokens) and `duration_ms` are
+  read from the printed JSON. Errors are typed as `AiUnavailableError`
+  (`not_configured`, `auth`, `rate_limit`, `timeout`, `service`,
+  `invalid_response`).
+- `src/ai/aiSettings.js` keeps the model (default `sonnet`) and the last
+  connection test in the local `settings` table. No credential is stored.
 - `src/agents/roster.js` gives the orchestrator, for each role, the scripted
   or AI agent that matches `agent_config.mode`. Only the PO and the Developer
   have AI versions. **QA is always scripted.**
@@ -205,8 +215,8 @@ statistic below was already derivable from what the workspace records.
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
 | PUT | `/api/agents/:id` | `{ "enabled": true \| false, "mode": "scripted" \| "ai" }` |
-| GET / PUT | `/api/ai` | AI provider status (no token returned) / save token and model |
-| POST | `/api/ai/test` | send one real test request to GitHub Models |
+| GET / PUT | `/api/ai` | AI provider status / `{ "model": "sonnet" }` ("" restores the default) |
+| POST | `/api/ai/test` | send one real test request to Claude Code |
 | GET | `/api/preview` | Live Preview status |
 | POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
 | POST | `/api/preview/refresh` | re-check (and reload) the current preview |
@@ -242,13 +252,15 @@ page. The right column's **Live Preview** panel shows the running product.
 
 - The scripted PO supports only the Hello World web application recipe. The
   AI-powered PO supports any static web page.
-- AI quality depends on the model, and the free GitHub Models tier is
-  rate-limited. QA checks for static pages are deterministic but heuristic
+- AI quality depends on the model, and the Claude subscription has a usage
+  limit that resets every few hours; when it is reached the workflow blocks. QA checks for static pages are deterministic but heuristic
   (for example "centred" accepts any common centring CSS; colours must match
   exactly after normalisation).
-- The connection to GitHub Models was tested only against a local stand-in
-  server, because the development environment cannot reach the service. The
-  first real request happens on the user's machine.
+- Claude Code needs macOS 13 or newer, so on the macOS 11 Mac the workspace
+  runs inside an Ubuntu virtual machine (UTM) and is opened from the Mac
+  through an SSH tunnel. The automated tests use a stand-in `claude` command;
+  `claude -p --output-format json` and `--model sonnet` were checked by hand
+  in the VM before this integration was written.
 - The scripted Developer produces correct code, so the correction loop does
   not occur in normal use. It is implemented and covered by automated tests
   that use a deliberately defective test double (never used by the app).

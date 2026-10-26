@@ -40,7 +40,7 @@ export function renderNav(ui) {
 export function teamModeText(state) {
   const ai = state.agents.filter((a) => a.mode === 'ai').map((a) => a.label);
   if (!ai.length) return 'Scripted agents · no AI model';
-  return `${ai.join(' and ')}: AI-powered (GitHub Models) · QA: scripted`;
+  return `${ai.join(' and ')}: AI-powered (Claude Code) · QA: scripted`;
 }
 
 export function renderSidebarStatus(state, ui) {

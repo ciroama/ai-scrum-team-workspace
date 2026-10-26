@@ -38,7 +38,7 @@ export function agentLabel(state, id) {
 
 export function kindBadge(kind, model) {
   if (kind === 'scripted') return h('span', { className: 'badge badge-scripted', title: 'Fixed rules and templates in code. No AI model.' }, 'Scripted');
-  if (kind === 'ai') return h('span', { className: 'badge badge-ai', title: `Decisions made by an AI model via GitHub Models${model ? ` (${model})` : ''}` }, 'AI-powered');
+  if (kind === 'ai') return h('span', { className: 'badge badge-ai', title: `Decisions made by an AI model via Claude Code${model ? ` (${model})` : ''}` }, 'AI-powered');
   if (kind === 'human') return h('span', { className: 'badge badge-human' }, 'Human');
   return h('span', { className: 'badge badge-system', title: 'Workspace infrastructure, not a team member' }, 'System');
 }
@@ -138,7 +138,7 @@ export function renderTeam(state, ui, actions) {
                   onchange: (e) => actions.setAgentMode(agent.id, e.target.value),
                 },
                 h('option', { value: 'scripted', selected: agent.mode === 'scripted' }, 'Scripted (rules, no AI)'),
-                h('option', { value: 'ai', selected: agent.mode === 'ai' }, 'AI-powered (GitHub Models)'),
+                h('option', { value: 'ai', selected: agent.mode === 'ai' }, 'AI-powered (Claude Code)'),
               )
             : h('span', { className: 'muted small' }, 'Always scripted, so verification stays independent of the AI'),
         ),
@@ -317,7 +317,7 @@ function evidenceFor(event, state) {
       return h(
         'dl',
         { className: 'kv' },
-        h('dt', null, 'Service'), h('dd', null, 'GitHub Models'),
+        h('dt', null, 'Service'), h('dd', null, 'Claude Code'),
         h('dt', null, 'Model'), h('dd', { className: 'mono' }, d.model || '—'),
         h('dt', null, 'Purpose'), h('dd', null, `${d.purpose} (attempt ${d.attempt})`),
         h('dt', null, 'Duration'), h('dd', null, duration(d.durationMs)),

@@ -1,49 +1,67 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { startServer } from '../src/server/app.js';
-import { GitHubModelsClient, parseJsonReply } from '../src/ai/githubModels.js';
+import { ClaudeCodeClient, parseJsonReply } from '../src/ai/claudeCode.js';
 import { validateDevReply, validatePoReply } from '../src/ai/contracts.js';
 import { computeAnalytics } from '../src/analytics/analytics.js';
 import { tempDir } from './helpers.js';
 
-// A fake token in the GitHub format (never a real one).
-const TOKEN = 'github_pat_TESTONLY0000000000000000000000abcd';
 const REQUEST = 'create a web page with background green and font red. The phrase in the center of page "hello world"';
 
-/**
- * A local stand-in for the GitHub Models endpoint: answers each request with
- * the next reply from `replies` and records what it received.
- */
-async function mockModels(t, replies) {
-  const received = [];
-  const server = createServer(async (req, res) => {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    const body = JSON.parse(raw);
-    received.push({ headers: req.headers, body });
-    const reply = typeof replies[0] === 'function' ? replies.shift()(body) : replies.shift();
-    if (!reply) {
-      res.writeHead(500).end('no reply prepared');
-      return;
-    }
-    if (reply.status) {
-      res.writeHead(reply.status, reply.headers ?? {}).end(reply.text ?? '');
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        model: 'openai/gpt-4.1-mini',
-        choices: [{ message: { role: 'assistant', content: typeof reply.content === 'string' ? reply.content : JSON.stringify(reply.content) } }],
-        usage: { prompt_tokens: 120, completion_tokens: 340 },
-      }),
-    );
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
-  return { url: `http://127.0.0.1:${server.address().port}/inference/chat/completions`, received, replies };
+// A local stand-in for the `claude` command. It answers each run with the
+// next prepared reply (in the JSON shape `claude -p --output-format json`
+// prints) and records the arguments, prompt, working folder and environment
+// it received.
+const FAKE_CLAUDE = `#!${process.execPath}
+const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+const dir = __dirname;
+let stdin = '';
+process.stdin.on('data', (c) => (stdin += c));
+process.stdin.on('end', () => {
+  const replies = JSON.parse(readFileSync(join(dir, 'replies.json'), 'utf8'));
+  const received = JSON.parse(readFileSync(join(dir, 'received.json'), 'utf8'));
+  received.push({ args: process.argv.slice(2), stdin, cwd: process.cwd(), apiKey: process.env.ANTHROPIC_API_KEY ?? null });
+  writeFileSync(join(dir, 'received.json'), JSON.stringify(received));
+  const reply = replies.shift();
+  writeFileSync(join(dir, 'replies.json'), JSON.stringify(replies));
+  const model = process.argv[process.argv.indexOf('--model') + 1];
+  if (!reply) { process.stderr.write('no reply prepared'); process.exit(1); }
+  if (reply.sleepMs) { setTimeout(() => {}, reply.sleepMs); return; }
+  if (reply.raw !== undefined) { process.stdout.write(reply.raw); process.stderr.write(reply.stderr ?? ''); process.exit(reply.exit ?? 0); }
+  const error = reply.error !== undefined;
+  process.stdout.write(JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    is_error: error,
+    api_error_status: reply.status ?? null,
+    duration_ms: 1500,
+    result: error ? reply.error : typeof reply.content === 'string' ? reply.content : JSON.stringify(reply.content),
+    usage: { input_tokens: 2, cache_creation_input_tokens: 100, cache_read_input_tokens: 18, output_tokens: 340 },
+    modelUsage: { ['claude-' + model + '-test']: { inputTokens: 2, outputTokens: 340 } },
+  }));
+  process.exit(error ? 1 : 0);
+});
+`;
+
+async function fakeClaude(t, replies) {
+  const dir = await tempDir(t);
+  const binary = join(dir, 'claude');
+  await writeFile(binary, FAKE_CLAUDE);
+  await chmod(binary, 0o755);
+  const write = (list) => writeFile(join(dir, 'replies.json'), JSON.stringify(list));
+  await write(replies);
+  await writeFile(join(dir, 'received.json'), '[]');
+  return {
+    binary,
+    received: async () => JSON.parse(await readFile(join(dir, 'received.json'), 'utf8')),
+    push: async (...more) => write([...JSON.parse(await readFile(join(dir, 'replies.json'), 'utf8')), ...more]),
+  };
 }
+
+const option = (args, name) => args[args.indexOf(name) + 1];
 
 const PO_SPEC = {
   status: 'ready',
@@ -75,13 +93,12 @@ const page = (color) => ({
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 async function aiApp(t, replies, { devMode = 'ai' } = {}) {
-  const mock = await mockModels(t, replies);
-  const app = await startServer({ port: 0, dataDir: await tempDir(t), aiEndpoint: mock.url });
+  const claude = await fakeClaude(t, replies);
+  const app = await startServer({ port: 0, dataDir: await tempDir(t), claudeBinary: claude.binary });
   t.after(() => app.close());
-  await fetch(`${app.url}/api/ai`, json('PUT', { token: TOKEN }));
   await fetch(`${app.url}/api/agents/po`, json('PUT', { mode: 'ai' }));
   if (devMode === 'ai') await fetch(`${app.url}/api/agents/dev`, json('PUT', { mode: 'ai' }));
-  return { app, mock };
+  return { app, claude };
 }
 
 async function run(app, request = REQUEST) {
@@ -91,18 +108,21 @@ async function run(app, request = REQUEST) {
 }
 
 test('AI PO and AI Developer build exactly what was asked; scripted QA verifies it independently', async (t) => {
-  const { app, mock } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }]);
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }]);
   const { workflow, events } = await run(app);
 
   assert.equal(workflow.status, 'completed');
   assert.equal(workflow.verified, true);
   assert.equal(workflow.title, 'Green hello world page');
 
-  // Real requests were sent with the token and the user's words.
-  assert.equal(mock.received.length, 2);
-  assert.equal(mock.received[0].headers.authorization, `Bearer ${TOKEN}`);
-  assert.ok(mock.received[0].body.messages.some((m) => m.content.includes('background green and font red')));
-  assert.equal(mock.received[0].body.model, 'openai/gpt-4.1-mini');
+  // Claude Code really ran twice, with the user's words, the default model and no tools.
+  const received = await claude.received();
+  assert.equal(received.length, 2);
+  assert.match(received[0].stdin, /background green and font red/);
+  assert.equal(option(received[0].args, '--model'), 'sonnet');
+  assert.equal(option(received[0].args, '--output-format'), 'json');
+  assert.equal(option(received[0].args, '--tools'), '');
+  assert.match(option(received[0].args, '--system-prompt'), /Product Owner/);
 
   // Every detail became a criterion, plus the entry page added by the workspace.
   const spec = workflow.state.spec;
@@ -112,6 +132,7 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
   const byType = (type) => events.filter((e) => e.type === type);
   assert.equal(byType('ai.call').length, 2);
   assert.ok(byType('ai.call').every((e) => e.actorKind === 'ai' && e.status === 'success'));
+  assert.match(byType('ai.call')[0].summary, /asked claude-sonnet-test via Claude Code to analyse the request in 1\.5 s, 120 → 340 tokens/);
   assert.equal(byType('po.requirements')[0].actorKind, 'ai');
   assert.equal(byType('dev.implementation')[0].actorKind, 'ai');
   assert.equal(byType('qa.verdict')[0].actorKind, 'scripted');
@@ -129,7 +150,7 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
 });
 
 test('a wrong colour from the AI Developer is caught by QA and corrected', async (t) => {
-  const { app, mock } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, { content: page('red') }]);
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, { content: page('red') }]);
   const { workflow, events } = await run(app);
 
   assert.equal(workflow.status, 'completed');
@@ -138,24 +159,26 @@ test('a wrong colour from the AI Developer is caught by QA and corrected', async
   const defect = events.find((e) => e.type === 'defect.reported');
   assert.match(defect.detail.actual, /expected a CSS rule setting color: red; found: .*color: blue/);
   // The correction request carried QA's defects and the current files.
-  const correction = JSON.parse(mock.received[2].body.messages[1].content.split('\n').slice(1).join('\n'));
+  const received = await claude.received();
+  const correction = JSON.parse(received[2].stdin.split('\n').slice(1).join('\n'));
   assert.equal(correction.defectsReportedByQA.length, 1);
   assert.ok(correction.currentFiles.some((f) => f.path === 'style.css' && f.content.includes('blue')));
 });
 
-test('when GitHub Models is unavailable the workflow blocks with the reason and resumes later', async (t) => {
-  const { app, mock } = await aiApp(t, [{ status: 429, headers: { 'retry-after': '60' } }]);
+test('when the Claude usage limit is reached the workflow blocks with the reason and resumes later', async (t) => {
+  const { app, claude } = await aiApp(t, [{ error: 'Claude AI usage limit reached|1761500000', status: 429 }]);
   const { workflow, events } = await run(app);
 
   assert.equal(workflow.status, 'blocked');
   assert.equal(workflow.stage, 'analysis');
-  assert.match(workflow.blockedReason, /free GitHub Models limit was reached.*retry after about 60 s/);
+  assert.match(workflow.blockedReason, /Claude usage limit was reached.*Wait until it resets, then resume/);
   const blocked = events.find((e) => e.type === 'workflow.blocked');
   assert.equal(blocked.detail.cause, 'ai_unavailable');
+  assert.equal(blocked.detail.kind, 'rate_limit');
   assert.equal(events.find((e) => e.type === 'ai.call').status, 'failure');
   assert.ok(!events.some((e) => e.type === 'po.requirements'), 'no analysis is claimed');
 
-  mock.replies.push({ content: PO_SPEC }, { content: page('red') });
+  await claude.push({ content: PO_SPEC }, { content: page('red') });
   const resumed = await app.orchestrator.resume(workflow.id).done;
   assert.equal(resumed.status, 'completed');
 
@@ -169,10 +192,11 @@ test('when GitHub Models is unavailable the workflow blocks with the reason and 
 
 test('an unusable model answer is retried once, then reported instead of guessed', async (t) => {
   const bad = { content: { status: 'ready', title: 'x', requirements: ['a'], acceptanceCriteria: [{ description: 'd', check: { type: 'looksNice' } }] } };
-  const { app, mock } = await aiApp(t, [bad, bad]);
+  const { app, claude } = await aiApp(t, [bad, bad]);
   const { workflow, events } = await run(app);
-  assert.equal(mock.received.length, 2);
-  assert.match(mock.received[1].body.messages[1].content, /unknown check type "looksNice"/);
+  const received = await claude.received();
+  assert.equal(received.length, 2);
+  assert.match(received[1].stdin, /unknown check type "looksNice"/);
   assert.equal(workflow.status, 'blocked');
   assert.match(workflow.blockedReason, /did not match the required format/);
   assert.equal(events.filter((e) => e.type === 'ai.call').length, 2);
@@ -200,19 +224,27 @@ test('an AI PO with a scripted Developer blocks with a clear way forward', async
   assert.equal(app.repository.listTasks(workflow.id).filter((x) => x.stage === 'analysis').length, 1, 'analysis was not repeated');
 });
 
-test('the token is stored locally and never sent back to the browser', async (t) => {
-  const { app } = await aiApp(t, []);
-  for (const path of ['/api/state', '/api/ai']) {
-    const text = await (await fetch(app.url + path)).text();
-    assert.ok(!text.includes(TOKEN), path);
-  }
+test('the model can be changed and is used for the next request; invalid names are refused', async (t) => {
+  const { app, claude } = await aiApp(t, [{ content: { ok: true } }]);
   const ai = await (await fetch(`${app.url}/api/ai`)).json();
-  assert.equal(ai.tokenConfigured, true);
-  assert.equal(ai.tokenHint, '…abcd');
-  assert.equal((await fetch(`${app.url}/api/ai`, json('PUT', { token: 'not a token' }))).status, 400);
-  assert.equal((await fetch(`${app.url}/api/ai`, json('PUT', { model: 'bad model' }))).status, 400);
-  await fetch(`${app.url}/api/ai`, json('PUT', { token: '' }));
-  assert.equal((await (await fetch(`${app.url}/api/ai`)).json()).tokenConfigured, false);
+  assert.equal(ai.providerName, 'Claude Code');
+  assert.equal(ai.model, 'sonnet');
+  assert.equal((await fetch(`${app.url}/api/ai`, json('PUT', { model: 'opus; rm -rf /' }))).status, 400);
+  assert.equal((await (await fetch(`${app.url}/api/ai`, json('PUT', { model: 'opus' }))).json()).model, 'opus');
+  await fetch(`${app.url}/api/ai/test`, { method: 'POST' });
+  assert.equal(option((await claude.received())[0].args, '--model'), 'opus');
+  await fetch(`${app.url}/api/ai`, json('PUT', { model: '' }));
+  assert.equal((await (await fetch(`${app.url}/api/ai`)).json()).model, 'sonnet', 'empty restores the default');
+});
+
+test('an old GitHub Models token is removed from the database on start', async (t) => {
+  const dataDir = await tempDir(t);
+  const first = await startServer({ port: 0, dataDir });
+  first.repository.setSetting('ai.githubModels.token', 'github_pat_TESTONLY0000000000000000000000abcd');
+  await first.close();
+  const second = await startServer({ port: 0, dataDir });
+  t.after(() => second.close());
+  assert.equal(second.repository.getSetting('ai.githubModels.token'), null);
 });
 
 test('modes: QA cannot be switched to AI, and mode changes are recorded', async (t) => {
@@ -222,48 +254,43 @@ test('modes: QA cannot be switched to AI, and mode changes are recorded', async 
   assert.match((await res.json()).error, /always scripted/);
   const events = app.repository.listWorkspaceEvents().filter((e) => e.type === 'agent.mode');
   assert.deepEqual(events.map((e) => e.detail.agentId), ['po', 'dev']);
-  assert.match(events[0].summary, /PO switched to AI-powered \(GitHub Models, openai\/gpt-4\.1-mini\)/);
+  assert.match(events[0].summary, /PO switched to AI-powered \(Claude Code, sonnet\)/);
   const state = await (await fetch(`${app.url}/api/state`)).json();
   assert.deepEqual(state.agents.map((a) => `${a.id}:${a.mode}:${a.kind}`), ['po:ai:ai', 'dev:ai:ai', 'qa:scripted:scripted']);
 });
 
 test('the connection test reports the real outcome', async (t) => {
-  const { app } = await aiApp(t, [{ content: { ok: true } }, { status: 401 }]);
+  const { app } = await aiApp(t, [{ content: { ok: true } }, { error: 'Invalid API key · Please run /login', status: 401 }]);
   const ok = await (await fetch(`${app.url}/api/ai/test`, { method: 'POST' })).json();
   assert.equal(ok.ok, true);
+  assert.match(ok.message, /Claude Code answered \(claude-sonnet-test\)/);
   const bad = await (await fetch(`${app.url}/api/ai/test`, { method: 'POST' })).json();
   assert.equal(bad.ok, false);
-  assert.match(bad.message, /rejected the token/);
+  assert.match(bad.message, /not logged in.*Run "claude" in a terminal/);
   assert.equal((await (await fetch(`${app.url}/api/ai`)).json()).lastCheck.ok, false);
 });
 
-test('unexpected responses are described for diagnosis; event streams are reassembled', async (t) => {
-  const { url } = await mockModels(t, [
-    { status: 200, headers: { 'Content-Type': 'text/html' }, text: '<!DOCTYPE html><html><title>Sign in</title> github_pat_SECRET123</html>' },
-    { status: 200, headers: { 'Content-Type': 'text/event-stream' }, text: 'data: {"model":"m","choices":[{"delta":{"content":"{\\"ok\\":"}}]}\n\ndata: {"choices":[{"delta":{"content":"true}"}}]}\n\ndata: [DONE]\n\n' },
-  ]);
-  const client = new GitHubModelsClient({ token: TOKEN, endpoint: url });
-  const error = await client.chatJson({ system: 's', user: 'u' }).catch((e) => e);
-  assert.equal(error.kind, 'invalid_response');
-  assert.match(error.message, /HTTP 200, content-type text\/html; the response starts with: "<!DOCTYPE html><html><title>Sign in<\/title> \[token\]/);
-  assert.ok(!error.message.includes('SECRET123'), 'tokens are never echoed');
-  const streamed = await client.chatJson({ system: 's', user: 'u' });
-  assert.deepEqual(streamed.json, { ok: true });
+test('Claude Code runs in an empty folder and never receives an API key', async (t) => {
+  const claude = await fakeClaude(t, [{ content: '```json\n{"ok":true}\n```' }]);
+  const saved = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-TESTONLY';
+  t.after(() => (saved === undefined ? delete process.env.ANTHROPIC_API_KEY : (process.env.ANTHROPIC_API_KEY = saved)));
+  const answer = await new ClaudeCodeClient({ binary: claude.binary }).chatJson({ system: 's', user: 'u' });
+  assert.deepEqual(answer.json, { ok: true });
+  assert.deepEqual(answer.usage, { promptTokens: 120, completionTokens: 340 });
+  const [call] = await claude.received();
+  assert.equal(call.apiKey, null, 'the subscription login is used, not paid API access');
+  assert.match(call.cwd, /scrum-ai-/);
 });
 
-test('requests use the documented GitHub headers and disable streaming', async (t) => {
-  const mock = await mockModels(t, [{ content: { ok: true } }]);
-  await new GitHubModelsClient({ token: TOKEN, endpoint: mock.url }).chatJson({ system: 's', user: 'u' });
-  assert.equal(mock.received[0].headers.accept, 'application/vnd.github+json');
-  assert.equal(mock.received[0].headers['x-github-api-version'], '2022-11-28');
-  assert.equal(mock.received[0].body.stream, false);
-});
-
-test('client errors are classified; JSON replies are parsed strictly', async () => {
-  const unreachable = new GitHubModelsClient({ token: TOKEN, endpoint: 'http://127.0.0.1:9/none', timeoutMs: 2000 });
-  await assert.rejects(unreachable.chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'network');
-  await assert.rejects(new GitHubModelsClient({ token: '' }).chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'not_configured');
+test('client errors are classified; JSON replies are parsed strictly', async (t) => {
+  await assert.rejects(new ClaudeCodeClient({ binary: '/nonexistent/claude' }).chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'not_configured' && /not installed/.test(e.message));
+  const claude = await fakeClaude(t, [{ sleepMs: 5000 }, { raw: 'Error: something broke', exit: 1 }, { raw: 'not json', exit: 0 }]);
+  await assert.rejects(new ClaudeCodeClient({ binary: claude.binary, timeoutMs: 500 }).chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'timeout');
+  await assert.rejects(new ClaudeCodeClient({ binary: claude.binary }).chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'service' && /something broke/.test(e.message));
+  await assert.rejects(new ClaudeCodeClient({ binary: claude.binary }).chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'invalid_response');
   assert.deepEqual(parseJsonReply('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepEqual(parseJsonReply('Here it is:\n{"a":1}'), { a: 1 });
   assert.throws(() => parseJsonReply('not json'), (e) => e.kind === 'invalid_response');
   assert.throws(() => parseJsonReply('[1,2]'), (e) => e.kind === 'invalid_response');
 });

@@ -10,8 +10,8 @@ watch every step:
 | Member | Kind | Responsibility |
 |---|---|---|
 | **You** | Human | Submit requirements, give direction, make product decisions |
-| **PO** (Product Owner) | Scripted agent | Turns the request into requirements and acceptance criteria, asks for clarification, reviews the verified result |
-| **Developer** | Scripted agent | Implements the requirements as real files, fixes defects reported by QA |
+| **PO** (Product Owner) | Scripted or AI-powered agent | Turns the request into requirements and acceptance criteria, asks for clarification, reviews the verified result |
+| **Developer** | Scripted or AI-powered agent | Implements the requirements as real files, fixes defects reported by QA |
 | **QA** (Quality Assurance) | Scripted agent | Turns acceptance criteria into tests, runs them, reports results and defects, re-tests corrections |
 
 A lightweight orchestrator (infrastructure, not a team member) assigns work,
@@ -23,9 +23,9 @@ Each agent works in one of two modes, shown on every card and message:
 
 - **Scripted** (default): fixed rules and templates written in this
   repository. No AI model, no autonomous reasoning.
-- **AI-powered** (PO and Developer only): decisions come from a model on
-  **GitHub Models**, the free, rate-limited AI service included with every
-  GitHub account. No paid API is used.
+- **AI-powered** (PO and Developer only): decisions come from a Claude model
+  through **Claude Code**, using your Claude subscription (for example Claude
+  Pro). No API key and no paid API usage.
 
 **QA is always scripted.** It turns the PO's acceptance criteria into
 deterministic tests and runs them for real, so verification stays independent
@@ -35,35 +35,40 @@ of the model that wrote the code. The PO's final acceptance is also a rule
 What is real in both modes: the requirements document, the product files
 written to disk, the `node --test` run and its results, the Git commits, and
 every recorded event and handoff. Every AI request is recorded too, with the
-model, duration and token counts reported by the service.
+model, duration and token counts reported by Claude Code.
 
-#### Turning on the AI (GitHub Models)
+#### Turning on the AI (Claude Code)
 
-1. Create a token at <https://github.com/settings/personal-access-tokens/new>.
-   Give it a name and an expiration, and under **Permissions** add **Models**
-   with **Read-only** access. No repository access is needed.
-2. In the dashboard open **Team**. Paste the token in **AI provider: GitHub
-   Models**, click **Save**, then **Test connection**.
-3. On the PO and Developer cards set **Brain** to **AI-powered (GitHub
-   Models)**.
+Claude Code must be installed and logged in on the computer that runs the
+workspace. It needs macOS 13 or newer, Windows or Linux; on an older Mac, run
+the workspace in a Linux virtual machine (see below).
 
-The token is stored only on your computer, in `data/workspace.db`. It is never
-uploaded to GitHub and never sent back to the browser. When the PO or the
-Developer is AI-powered, your request text and the generated files are sent
-to GitHub Models over the internet.
+1. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
+2. Run `claude` once in a terminal and log in with your Claude account
+   (choose the subscription, not the Console/API account).
+3. In the dashboard open **Team**, then **AI provider: Claude Code** →
+   **Test connection**. It sends one small real request.
+4. On the PO and Developer cards set **Brain** to **AI-powered (Claude Code)**.
 
 Limits and behaviour:
 
-- The free tier is rate-limited (GitHub documents roughly 50–150 requests per
-  day, depending on the model). A workflow uses about 2–4 requests.
-- If the service cannot be used (no internet, invalid token, limit reached,
-  an unusable answer), the workflow is **Blocked** with the reason. Fix it
-  and click **Resume**; nothing is invented in the meantime.
+- Each request runs `claude -p` once, in an empty temporary folder, with all
+  tools disabled: the model only answers, it cannot read or change files.
+  The workspace writes the files itself after checking the answer.
+- If `ANTHROPIC_API_KEY` is set in your environment, it is not passed to
+  Claude Code, so the subscription login is always used (no paid API).
+- Requests count against your subscription's usage limit. A workflow uses
+  about 2–4 requests. The default model is `sonnet`, which uses less of the
+  limit than `opus`; change it on the Team page.
+- If Claude Code cannot be used (not installed, not logged in, limit
+  reached, no answer within 5 minutes, an unusable answer), the workflow is
+  **Blocked** with the reason. Fix it and click **Resume**; nothing is
+  invented in the meantime.
 - In AI mode the team can build any **static web page** (HTML, CSS, browser
   JavaScript). The PO asks for clarification when a request cannot be built
   that way.
-- The default model is `openai/gpt-4.1-mini`. You can change it on the Team
-  page.
+- Your request text and the generated files are sent to Anthropic over the
+  internet.
 
 ### Supported requests (scripted PO)
 
@@ -104,7 +109,7 @@ The generated product is a static web page (`index.html`, `app.js`,
 
 Click **Start preview** to run the product of the workflow shown on the
 dashboard. The product is served by a separate local preview server on its
-own port (127.0.0.1, a free port chosen automatically, or `PREVIEW_PORT`).
+own port (127.0.0.1, port 3001 by default, or `PREVIEW_PORT`).
 The status is **Not Started**, **Starting**, **Running** or **Error**.
 "Running" is shown only after the product's page has actually been loaded
 from the preview server. Use the refresh button to reload and re-check it, or
@@ -182,11 +187,36 @@ to stop it.
 Options (environment variables):
 
 - `PORT` — HTTP port (default `3000`), e.g. `PORT=4000 npm start`
-- `PREVIEW_PORT` — port of the Live Preview server (default: a free port)
+- `PREVIEW_PORT` — port of the Live Preview server (default `3001`; `0` picks
+  a free port)
 - `WORKSPACE_DATA_DIR` — where the database and generated products are stored
   (default `./data`, ignored by Git). Delete it to start fresh.
+- `CLAUDE_BINARY` — the Claude Code command, if it is not `claude`
 
 If you used Milestone 1, its database is kept as `data/workspace.v1.db`.
+
+## Running in a virtual machine (older Macs)
+
+On macOS 11 Claude Code cannot be installed, so the workspace runs inside an
+Ubuntu Server VM (UTM 4.7.5, the last UTM version for macOS 11) and you use
+it from the Mac's browser.
+
+1. In the VM install Node.js 22 and Git: `sudo apt install -y nodejs npm git`
+   (Ubuntu 26.04 ships Node.js 22.22), then Claude Code and its login as
+   described above.
+2. Clone this repository in the VM, then run `npm test` and `npm start` there.
+3. On the Mac, open Terminal and connect with a tunnel for both ports
+   (replace the user name and the VM address):
+
+   ```bash
+   ssh -L 3000:127.0.0.1:3000 -L 3001:127.0.0.1:3001 ciro@192.168.64.2
+   ```
+
+4. Open <http://localhost:3000> in the Mac's browser. The Live Preview uses
+   port 3001 through the same tunnel. Keep the SSH window open.
+
+Inside the VM the workspace still listens only on 127.0.0.1; the tunnel is
+the only way in.
 
 ## Where things are stored
 

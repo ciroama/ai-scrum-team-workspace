@@ -17,13 +17,15 @@ const { startServer } = await import('./server/app.js');
 
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.WORKSPACE_DATA_DIR ?? 'data';
-const previewPort = Number(process.env.PREVIEW_PORT ?? 0);
-// Advanced: point the AI agents at another OpenAI-compatible endpoint (used for testing).
-const aiEndpoint = process.env.GITHUB_MODELS_ENDPOINT || undefined;
+// A fixed port, so an SSH tunnel can forward it when the workspace runs in a
+// virtual machine. PREVIEW_PORT=0 picks a free port instead.
+const previewPort = Number(process.env.PREVIEW_PORT ?? 3001);
+// Advanced: the Claude Code command, if it is not on the PATH as "claude".
+const claudeBinary = process.env.CLAUDE_BINARY || undefined;
 
 let app;
 try {
-  app = await startServer({ port, dataDir, previewPort, aiEndpoint });
+  app = await startServer({ port, dataDir, previewPort, claudeBinary });
 } catch (error) {
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${port} is already in use. Stop the other program or start with another port, e.g.: PORT=4000 npm start`);
@@ -35,13 +37,14 @@ try {
 }
 
 console.log(`AI Scrum Team Workspace running at ${app.url}`);
+console.log(`Live Preview port: ${previewPort || 'chosen automatically'}`);
 console.log(`Data folder: ${dataDir} (SQLite database + generated products)`);
 if (app.legacyBackup) console.log(`The Milestone 1 database was kept as ${app.legacyBackup}.`);
 const modes = app.repository.getAgentConfig();
 const aiAgents = ['po', 'dev'].filter((id) => modes[id]?.mode === 'ai');
 console.log(
   aiAgents.length
-    ? `AI-powered agents: ${aiAgents.map((id) => (id === 'po' ? 'PO' : 'Developer')).join(', ')} (GitHub Models, free tier). QA is scripted.`
+    ? `AI-powered agents: ${aiAgents.map((id) => (id === 'po' ? 'PO' : 'Developer')).join(', ')} (Claude Code, model ${app.aiSettings.model}). QA is scripted.`
     : 'The PO, Developer and QA agents are scripted (rules and templates, no AI model). AI can be enabled on the Team page.',
 );
 console.log('Keep this window open while you use the dashboard. Press Ctrl+C to stop.');

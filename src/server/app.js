@@ -70,12 +70,12 @@ function statusFor(error) {
  * @param {Map<string, object>} [options.team]
  * @param {string} [options.gitBinary]
  * @param {number} [options.previewPort]  0 (default) picks a free port
- * @param {string} [options.aiEndpoint]  GitHub Models endpoint (overridable for tests)
+ * @param {string} [options.claudeBinary]  the `claude` command (overridable for tests)
  */
-export function createApp({ dataDir, team, gitBinary, previewPort = 0, aiEndpoint }) {
+export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBinary }) {
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
-  const aiSettings = new AiSettings({ repository, ...(aiEndpoint ? { endpoint: aiEndpoint } : {}) });
+  const aiSettings = new AiSettings({ repository, ...(claudeBinary ? { binary: claudeBinary } : {}) });
   team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: () => aiSettings.client() });
   const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary });
   orchestrator.init();
@@ -182,8 +182,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, aiEndpoin
       'PUT',
       /^\/api\/ai$/,
       async (req) => {
-        const { token, model } = await readJsonBody(req);
-        const result = aiSettings.update({ token, model });
+        const { model } = await readJsonBody(req);
+        const result = aiSettings.update({ model });
         if (!result.ok) throw new HttpError(400, result.error);
         return aiSettings.status();
       },
@@ -281,7 +281,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, aiEndpoin
     db.close();
   }
 
-  return { handle, repository, orchestrator, team, preview, close, legacyBackup };
+  return { handle, repository, orchestrator, team, preview, aiSettings, close, legacyBackup };
 }
 
 /**

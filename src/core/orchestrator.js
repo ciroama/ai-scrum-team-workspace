@@ -228,7 +228,7 @@ export class Orchestrator {
   }
 
   /**
-   * Switches how an agent decides: 'scripted' (rules) or 'ai' (GitHub Models).
+   * Switches how an agent decides: 'scripted' (rules) or 'ai' (Claude Code).
    * Like enable/disable, it applies to the next assignment.
    * @returns {{ changed: boolean }}
    */
@@ -249,7 +249,7 @@ export class Orchestrator {
       actorKind: 'human',
       status: 'info',
       summary:
-        `${this.label(agentId)} switched to ${mode === 'ai' ? `AI-powered (GitHub Models${modelName ? `, ${modelName}` : ''})` : 'scripted (rules and templates, no AI)'}.` +
+        `${this.label(agentId)} switched to ${mode === 'ai' ? `AI-powered (Claude Code${modelName ? `, ${modelName}` : ''})` : 'scripted (rules and templates, no AI)'}.` +
         (running ? ` Its current task finishes in the previous mode.` : ''),
       detail: { agentId, mode, model: mode === 'ai' ? modelName ?? null : null },
     });
@@ -361,7 +361,7 @@ export class Orchestrator {
         category: 'ai',
         status: call.ok ? 'success' : 'failure',
         summary: call.ok
-          ? `${ctx.agent.label} asked ${call.model} via GitHub Models to ${call.purpose}${time}${tokens}.`
+          ? `${ctx.agent.label} asked ${call.model} via Claude Code to ${call.purpose}${time}${tokens}.`
           : `${ctx.agent.label}'s request to ${call.model} (${call.purpose}, attempt ${call.attempt}) failed: ${call.error}`,
         detail: call,
         error: call.ok ? null : call.error,

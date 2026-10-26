@@ -1,21 +1,12 @@
-// AI provider settings (GitHub Models), shown on the Team page.
+// AI provider settings (Claude Code), shown on the Team page.
 // The form is built once per visit so typing is never interrupted by live
 // updates; only the status line is re-rendered.
 
 import { dateTime, h, icon, mount } from './dom.js';
 
-const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new';
-
 export function mountAiPanel(state, actions) {
   const ai = state.ai;
-  const token = h('input', {
-    id: 'ai-token',
-    type: 'password',
-    autocomplete: 'off',
-    spellcheck: 'false',
-    placeholder: ai.tokenConfigured ? `Token saved (${ai.tokenHint}). Paste a new one to replace it.` : 'Paste your GitHub token (github_pat_…)',
-  });
-  const model = h('input', { id: 'ai-model', type: 'text', spellcheck: 'false', value: ai.model, placeholder: ai.defaultModel });
+  const model = h('input', { id: 'ai-model', type: 'text', spellcheck: 'false', value: ai.model, placeholder: ai.defaultModel, list: 'ai-models' });
 
   mount(
     'ai-panel',
@@ -26,8 +17,8 @@ export function mountAiPanel(state, actions) {
       h(
         'p',
         { className: 'muted small' },
-        'Free, rate-limited AI models for every GitHub account. Set the PO and the Developer to "AI-powered" below to use it. ',
-        'When they are AI-powered, your request text and the generated files are sent to GitHub Models over the internet. QA always stays scripted.',
+        'Uses Claude Code installed on this computer, with its own login (for example a Claude Pro subscription). No API key is stored here. ',
+        'Set the PO and the Developer to "AI-powered" below to use it. Their requests and the generated files are sent to Anthropic over the internet. QA always stays scripted.',
       ),
       h(
         'form',
@@ -35,31 +26,29 @@ export function mountAiPanel(state, actions) {
           className: 'ai-form',
           onsubmit: (e) => {
             e.preventDefault();
-            actions.saveAi({ token: token.value.trim() || undefined, model: model.value.trim() });
-            token.value = '';
+            actions.saveAi({ model: model.value.trim() });
           },
         },
-        h('label', null, h('span', null, 'GitHub token (permission "Models: read")'), token),
-        h('label', null, h('span', null, 'Model'), model),
+        h('label', null, h('span', null, 'Model (sonnet uses less of the subscription limit than opus)'), model),
+        h('datalist', { id: 'ai-models' }, ai.suggestedModels.map((m) => h('option', { value: m }))),
         h(
           'div',
           { className: 'ai-actions' },
           h('button', { type: 'submit', className: 'btn btn-primary btn-sm' }, 'Save'),
           h('button', { type: 'button', className: 'btn btn-sm', onclick: () => actions.testAi() }, 'Test connection'),
-          h('button', { type: 'button', className: 'btn btn-sm btn-ghost', onclick: () => actions.saveAi({ token: '' }) }, 'Remove token'),
         ),
       ),
       h('div', { id: 'ai-status', className: 'ai-status', role: 'status', 'aria-live': 'polite' }),
       h(
         'details',
         { className: 'disclosure' },
-        h('summary', null, 'How to create the token'),
+        h('summary', null, 'How to set up Claude Code'),
         h(
           'ol',
           null,
-          h('li', null, 'Open ', h('a', { className: 'link-button', href: TOKEN_URL, target: '_blank', rel: 'noopener' }, 'github.com/settings/personal-access-tokens/new'), '.'),
-          h('li', null, 'Give it a name, choose an expiration, and under "Permissions" add "Models" with access "Read-only". No repository access is needed.'),
-          h('li', null, 'Click "Generate token", copy it and paste it above. It is stored only on this computer (in the data folder, which is not uploaded to GitHub).'),
+          h('li', null, 'Install Claude Code on the computer that runs this workspace: ', h('span', { className: 'mono' }, 'curl -fsSL https://claude.ai/install.sh | bash'), '.'),
+          h('li', null, 'Run ', h('span', { className: 'mono' }, 'claude'), ' once in a terminal and log in with your Claude account (subscription).'),
+          h('li', null, 'Click "Test connection" above. It sends one small real request.'),
         ),
       ),
     ),
@@ -70,13 +59,9 @@ export function renderAiStatus(state, ui) {
   const ai = state.ai;
   const chip = document.getElementById('ai-status-chip');
   if (!chip) return;
-  let tone = 'warning';
-  let label = 'No token';
-  if (ai.tokenConfigured) {
-    if (!ai.lastCheck) [tone, label] = ['info', 'Not tested yet'];
-    else if (ai.lastCheck.ok) [tone, label] = ['success', 'Connected'];
-    else [tone, label] = ['danger', 'Connection failed'];
-  }
+  let tone = 'info';
+  let label = 'Not tested yet';
+  if (ai.lastCheck) [tone, label] = ai.lastCheck.ok ? ['success', 'Connected'] : ['danger', 'Connection failed'];
   chip.dataset.tone = tone;
   mount(chip, h('span', { className: 'dot' }), label);
 
@@ -87,7 +72,6 @@ export function renderAiStatus(state, ui) {
     h(
       'p',
       { className: 'muted small' },
-      ai.tokenConfigured ? `Token saved (${ai.tokenHint}). ` : 'No token saved. ',
       `Model: ${ai.model}. `,
       usedBy.length ? `AI-powered now: ${usedBy.join(', ')}.` : 'No agent is AI-powered yet.',
       ai.lastCheck ? ` Last test ${dateTime(ai.lastCheck.at)}: ${ai.lastCheck.message}` : '',

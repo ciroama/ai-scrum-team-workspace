@@ -234,7 +234,7 @@ export function computeAnalytics(source, filter = {}, { recipes = [], agents = [
       value: enough ? otherBlocks.length : null,
       detail: enough && otherBlocks.length ? `${otherBlocks.filter((b) => b.detail.cause === 'ai_unavailable').length} AI service · ${otherBlocks.filter((b) => b.detail.cause !== 'ai_unavailable').length} configuration` : null,
       source: SOURCE.recorded,
-      basis: 'Recorded workflow.blocked events caused by the AI service being unavailable (network, token, rate limit, unusable answer) or by a configuration mismatch.',
+      basis: 'Recorded workflow.blocked events caused by the AI service being unavailable (not installed, not logged in, usage limit, timeout, unusable answer) or by a configuration mismatch.',
     },
     {
       key: 'aiCalls',
@@ -245,7 +245,7 @@ export function computeAnalytics(source, filter = {}, { recipes = [], agents = [
         ? `${aiCalls.filter((c) => c.status === 'success').length} succeeded · ${sum(aiCalls.map((c) => (c.detail?.usage?.promptTokens ?? 0) + (c.detail?.usage?.completionTokens ?? 0)))} tokens`
         : null,
       source: SOURCE.recorded,
-      basis: 'Recorded ai.call events: every request the AI-powered PO or Developer sent to GitHub Models, with its real outcome and token usage as reported by the service.',
+      basis: 'Recorded ai.call events: every request the AI-powered PO or Developer sent to Claude Code, with its real outcome and token usage as reported by Claude Code.',
     },
   ];
 

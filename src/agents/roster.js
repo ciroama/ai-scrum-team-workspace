@@ -13,7 +13,7 @@ export class TeamRoster {
   /**
    * @param {object} deps
    * @param {(agentId: string) => 'scripted' | 'ai'} deps.getMode
-   * @param {() => import('../ai/githubModels.js').GitHubModelsClient} deps.getClient
+   * @param {() => import('../ai/claudeCode.js').ClaudeCodeClient} deps.getClient
    * @param {Map<string, object>} [deps.scripted]
    */
   constructor({ getMode, getClient, scripted = createTeam() }) {

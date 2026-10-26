@@ -1,62 +1,50 @@
-// Local AI configuration (GitHub Models). Stored in the workspace database
-// under data/, which is not in Git. The token is never sent back to the
-// browser: the API only reports whether one is configured.
+// Local AI configuration (Claude Code). Only the model is stored, in the
+// workspace database under data/; the login belongs to Claude Code itself.
 
-import { GITHUB_MODELS, GitHubModelsClient } from './githubModels.js';
+import { CLAUDE_CODE, ClaudeCodeClient } from './claudeCode.js';
 
-const KEYS = { token: 'ai.githubModels.token', model: 'ai.githubModels.model', lastCheck: 'ai.githubModels.lastCheck' };
-const MODEL_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.:-]+$/;
-const TOKEN_PATTERN = /^[A-Za-z0-9_]{20,255}$/;
+const KEYS = { model: 'ai.claudeCode.model', lastCheck: 'ai.claudeCode.lastCheck' };
+// Settings of the retired GitHub Models integration, removed on start so an
+// old token does not stay on disk.
+const LEGACY_KEYS = ['ai.githubModels.token', 'ai.githubModels.model', 'ai.githubModels.lastCheck'];
+const MODEL_PATTERN = /^[A-Za-z0-9._[\]-]{1,80}$/;
 
 export class AiSettings {
   /**
    * @param {object} deps
    * @param {import('../storage/repository.js').Repository} deps.repository
-   * @param {string} [deps.endpoint]  overridable for tests
-   * @param {typeof fetch} [deps.fetchImpl]
+   * @param {string} [deps.binary]  the `claude` command (overridable for tests)
    */
-  constructor({ repository, endpoint = GITHUB_MODELS.endpoint, fetchImpl }) {
+  constructor({ repository, binary = 'claude' }) {
     this.repository = repository;
-    this.endpoint = endpoint;
-    this.fetchImpl = fetchImpl;
+    this.binary = binary;
+    for (const key of LEGACY_KEYS) if (repository.getSetting(key) != null) repository.setSetting(key, null);
   }
 
   get model() {
-    return this.repository.getSetting(KEYS.model) || GITHUB_MODELS.defaultModel;
+    return this.repository.getSetting(KEYS.model) || CLAUDE_CODE.defaultModel;
   }
 
   status() {
-    const token = this.repository.getSetting(KEYS.token);
     const lastCheck = this.repository.getSetting(KEYS.lastCheck);
     return {
-      provider: GITHUB_MODELS.id,
-      providerName: GITHUB_MODELS.name,
-      endpoint: this.endpoint,
+      provider: CLAUDE_CODE.id,
+      providerName: CLAUDE_CODE.name,
       model: this.model,
-      defaultModel: GITHUB_MODELS.defaultModel,
-      tokenConfigured: Boolean(token),
-      tokenHint: token ? `…${token.slice(-4)}` : null,
+      defaultModel: CLAUDE_CODE.defaultModel,
+      suggestedModels: CLAUDE_CODE.suggestedModels,
       lastCheck: lastCheck ? JSON.parse(lastCheck) : null,
     };
   }
 
   /**
-   * @param {{ token?: string, model?: string }} changes  token "" removes it
+   * @param {{ model?: string }} changes  model "" restores the default
    * @returns {{ ok: true } | { ok: false, error: string }}
    */
-  update({ token, model }) {
-    if (token !== undefined) {
-      if (typeof token !== 'string') return { ok: false, error: 'The token must be text.' };
-      const trimmed = token.trim();
-      if (trimmed && !TOKEN_PATTERN.test(trimmed)) {
-        return { ok: false, error: 'This does not look like a GitHub token (it usually starts with "github_pat_").' };
-      }
-      this.repository.setSetting(KEYS.token, trimmed || null);
-      this.repository.setSetting(KEYS.lastCheck, null);
-    }
+  update({ model }) {
     if (model !== undefined) {
       if (typeof model !== 'string' || (model.trim() && !MODEL_PATTERN.test(model.trim()))) {
-        return { ok: false, error: 'The model must look like "publisher/model", e.g. openai/gpt-4.1-mini.' };
+        return { ok: false, error: 'The model must be a Claude Code model name, e.g. sonnet, opus or haiku.' };
       }
       this.repository.setSetting(KEYS.model, model.trim() || null);
       this.repository.setSetting(KEYS.lastCheck, null);
@@ -65,12 +53,7 @@ export class AiSettings {
   }
 
   client() {
-    return new GitHubModelsClient({
-      token: this.repository.getSetting(KEYS.token),
-      model: this.model,
-      endpoint: this.endpoint,
-      ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
-    });
+    return new ClaudeCodeClient({ model: this.model, binary: this.binary });
   }
 
   /** Sends one tiny real request and records the outcome. */
@@ -78,8 +61,8 @@ export class AiSettings {
     const at = new Date().toISOString();
     let result;
     try {
-      const answer = await this.client().chatJson({ system: 'Answer with the JSON object {"ok": true} and nothing else.', user: 'Connection test', maxTokens: 20 });
-      result = { ok: true, at, model: answer.model, durationMs: answer.durationMs, message: `Connected to ${GITHUB_MODELS.name} (${answer.model}).` };
+      const answer = await this.client().chatJson({ system: 'Answer with the JSON object {"ok": true} and nothing else.', user: 'Connection test' });
+      result = { ok: true, at, model: answer.model, durationMs: answer.durationMs, message: `Claude Code answered (${answer.model}).` };
     } catch (error) {
       result = { ok: false, at, message: error.message };
     }

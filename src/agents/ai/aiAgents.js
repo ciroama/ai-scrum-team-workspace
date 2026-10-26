@@ -1,4 +1,4 @@
-// AI-powered agents (GitHub Models). They implement the same contracts as
+// AI-powered agents (Claude Code). They implement the same contracts as
 // the scripted agents, so the orchestrator and dashboard treat them alike,
 // but every decision here comes from a model, and every model call is
 // reported back (aiCalls) so the activity log can show it.
@@ -11,7 +11,7 @@
 
 import { Agent, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
-import { AiUnavailableError } from '../../ai/githubModels.js';
+import { AiUnavailableError } from '../../ai/claudeCode.js';
 import { ContractError, WEB_CHECK_TYPES, validateDevReply, validatePoReply } from '../../ai/contracts.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
@@ -53,7 +53,7 @@ async function askWithContract(getClient, { system, user, validate, purpose }) {
 }
 
 export class AiProductOwnerAgent extends Agent {
-  /** @param {{ getClient: () => import('../../ai/githubModels.js').GitHubModelsClient }} deps */
+  /** @param {{ getClient: () => import('../../ai/claudeCode.js').ClaudeCodeClient }} deps */
   constructor({ getClient }) {
     const scripted = new ProductOwnerAgent();
     super({ ...scripted.profile, summary: 'Understands your request with an AI model and writes requirements and verifiable acceptance criteria.' }, AgentKind.AI);
@@ -133,13 +133,13 @@ function requirementsMarkdown(spec) {
     '',
     ...spec.acceptanceCriteria.map((c) => `- **${c.id}**: ${c.description}`),
     '',
-    '_Written by the AI-powered PO (GitHub Models)._',
+    '_Written by the AI-powered PO (Claude Code)._',
     '',
   ].join('\n');
 }
 
 export class AiDeveloperAgent extends Agent {
-  /** @param {{ getClient: () => import('../../ai/githubModels.js').GitHubModelsClient }} deps */
+  /** @param {{ getClient: () => import('../../ai/claudeCode.js').ClaudeCodeClient }} deps */
   constructor({ getClient }) {
     super(
       {

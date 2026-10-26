@@ -167,7 +167,7 @@ const actions = {
   async saveAi(changes) {
     try {
       await api('/api/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
-      ui.aiMessage = { tone: 'success', text: changes.token === '' ? 'Token removed.' : 'Saved. Click "Test connection" to check it with a real request.' };
+      ui.aiMessage = { tone: 'success', text: 'Saved. Click "Test connection" to check it with a real request.' };
     } catch (error) {
       ui.aiMessage = { tone: 'error', text: error.message };
     }
@@ -175,7 +175,7 @@ const actions = {
   },
 
   async testAi() {
-    ui.aiMessage = { tone: 'info', text: 'Testing the connection to GitHub Models…' };
+    ui.aiMessage = { tone: 'info', text: 'Sending a test request to Claude Code…' };
     render();
     try {
       const result = await api('/api/ai/test', { method: 'POST' });
