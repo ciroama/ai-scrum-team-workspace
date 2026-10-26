@@ -27,6 +27,7 @@ corrections, Git commits and every AI request.
 - [Limitations](#limitations)
 - [History](#history)
 - [Disclaimer](#disclaimer)
+- [License](#license)
 
 ## Why this project exists
 
@@ -390,3 +391,8 @@ The project was built in milestones, all recorded in the Git history:
 An independent personal project, not affiliated with or endorsed by
 Anthropic or GitHub. Using Claude Code is subject to Anthropic's terms and
 your subscription's usage limits.
+
+## License
+
+© Ciro Amati. All rights reserved. The code is shared for reference only;
+no license is granted to copy, modify or reuse it.
