@@ -41,6 +41,33 @@ export function parseJsonReply(text) {
   throw new AiUnavailableError('invalid_response', 'The model did not return a JSON object.');
 }
 
+/** A short, token-free description of an unexpected HTTP response, for diagnosis. */
+function describeResponse(res, text) {
+  const snippet = text.replace(/github_pat_[A-Za-z0-9_]+/g, '[token]').replace(/\s+/g, ' ').trim().slice(0, 160);
+  const type = res.headers.get('content-type') || 'none';
+  return `HTTP ${res.status}, content-type ${type}${res.redirected ? `, redirected to ${res.url}` : ''}; the response starts with: "${snippet || '(empty)'}"`;
+}
+
+/**
+ * Some OpenAI-compatible services answer as a server-sent event stream even
+ * for non-streaming requests. Reassemble it into a normal completion body.
+ */
+function parseEventStream(text) {
+  let content = '';
+  let model;
+  let usage;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    const chunk = JSON.parse(data);
+    model ??= chunk.model;
+    usage = chunk.usage ?? usage;
+    content += chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content ?? '';
+  }
+  return { model, usage, choices: [{ message: { content } }] };
+}
+
 export class GitHubModelsClient {
   /**
    * @param {object} options
@@ -72,10 +99,12 @@ export class GitHubModelsClient {
     try {
       res = await this.fetchImpl(this.endpoint, {
         method: 'POST',
+        // Headers as in GitHub's documented example for the inference API.
         headers: {
           Authorization: `Bearer ${this.token}`,
           'Content-Type': 'application/json',
-          Accept: 'application/json',
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
         },
         body: JSON.stringify({
           model: this.model,
@@ -86,6 +115,7 @@ export class GitHubModelsClient {
           response_format: { type: 'json_object' },
           temperature: 0.2,
           max_tokens: maxTokens,
+          stream: false,
         }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
@@ -103,17 +133,19 @@ export class GitHubModelsClient {
       throw new AiUnavailableError('rate_limit', `The free GitHub Models limit was reached (HTTP 429)${retry ? `; retry after about ${retry} s` : ''}. Wait, then resume.`);
     }
     if (!res.ok) {
-      throw new AiUnavailableError('http', `GitHub Models returned HTTP ${res.status}: ${text.slice(0, 300)}`);
+      throw new AiUnavailableError('http', `GitHub Models returned an error: ${describeResponse(res, text)}`);
     }
 
     let body;
     try {
-      body = JSON.parse(text);
+      body = /^\s*data:/.test(text) ? parseEventStream(text) : JSON.parse(text);
     } catch {
-      throw new AiUnavailableError('invalid_response', 'GitHub Models returned a response that is not JSON.');
+      throw new AiUnavailableError('invalid_response', `GitHub Models returned a response that is not JSON (${describeResponse(res, text)}).`);
     }
     const content = body?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') throw new AiUnavailableError('invalid_response', 'GitHub Models returned no message content.');
+    if (typeof content !== 'string' || content === '') {
+      throw new AiUnavailableError('invalid_response', `GitHub Models returned no message content (${describeResponse(res, text)}).`);
+    }
     return {
       json: parseJsonReply(content),
       model: body.model ?? this.model,

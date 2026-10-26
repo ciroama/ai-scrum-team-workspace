@@ -237,6 +237,28 @@ test('the connection test reports the real outcome', async (t) => {
   assert.equal((await (await fetch(`${app.url}/api/ai`)).json()).lastCheck.ok, false);
 });
 
+test('unexpected responses are described for diagnosis; event streams are reassembled', async (t) => {
+  const { url } = await mockModels(t, [
+    { status: 200, headers: { 'Content-Type': 'text/html' }, text: '<!DOCTYPE html><html><title>Sign in</title> github_pat_SECRET123</html>' },
+    { status: 200, headers: { 'Content-Type': 'text/event-stream' }, text: 'data: {"model":"m","choices":[{"delta":{"content":"{\\"ok\\":"}}]}\n\ndata: {"choices":[{"delta":{"content":"true}"}}]}\n\ndata: [DONE]\n\n' },
+  ]);
+  const client = new GitHubModelsClient({ token: TOKEN, endpoint: url });
+  const error = await client.chatJson({ system: 's', user: 'u' }).catch((e) => e);
+  assert.equal(error.kind, 'invalid_response');
+  assert.match(error.message, /HTTP 200, content-type text\/html; the response starts with: "<!DOCTYPE html><html><title>Sign in<\/title> \[token\]/);
+  assert.ok(!error.message.includes('SECRET123'), 'tokens are never echoed');
+  const streamed = await client.chatJson({ system: 's', user: 'u' });
+  assert.deepEqual(streamed.json, { ok: true });
+});
+
+test('requests use the documented GitHub headers and disable streaming', async (t) => {
+  const mock = await mockModels(t, [{ content: { ok: true } }]);
+  await new GitHubModelsClient({ token: TOKEN, endpoint: mock.url }).chatJson({ system: 's', user: 'u' });
+  assert.equal(mock.received[0].headers.accept, 'application/vnd.github+json');
+  assert.equal(mock.received[0].headers['x-github-api-version'], '2022-11-28');
+  assert.equal(mock.received[0].body.stream, false);
+});
+
 test('client errors are classified; JSON replies are parsed strictly', async () => {
   const unreachable = new GitHubModelsClient({ token: TOKEN, endpoint: 'http://127.0.0.1:9/none', timeoutMs: 2000 });
   await assert.rejects(unreachable.chatJson({ system: 's', user: 'u' }), (e) => e.kind === 'network');
