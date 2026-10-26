@@ -15,8 +15,21 @@ export function normalizeRequest(text) {
     .trim();
 }
 
+/**
+ * Product type for requirements written by the AI-powered PO: any static web
+ * page. It is not matched by the scripted PO; it only tells the platform how
+ * to preview the product and what to call it.
+ */
+export const AI_WEB_RECIPE = {
+  id: 'ai-static-web',
+  title: 'Web page (AI-powered team)',
+  summary: 'Any static web page (HTML, CSS, browser JavaScript), specified by the AI-powered PO.',
+  examples: [],
+  preview: { type: 'static', entry: 'index.html' },
+};
+
 export function getRecipe(id) {
-  return RECIPES.find((recipe) => recipe.id === id) ?? null;
+  return [...RECIPES, AI_WEB_RECIPE].find((recipe) => recipe.id === id) ?? null;
 }
 
 /** Public description of the catalogue, for the UI and the PO's replies. */

@@ -95,13 +95,39 @@ export class Repository extends EventEmitter {
     for (const id of agentIds) insert.run(id, now());
   }
 
-  /** @returns {Record<string, { enabled: boolean, updatedAt: string }>} */
+  /** @returns {Record<string, { enabled: boolean, mode: 'scripted' | 'ai', updatedAt: string }>} */
   getAgentConfig() {
     const config = {};
     for (const row of this.db.prepare('SELECT * FROM agent_config').all()) {
-      config[row.agent_id] = { enabled: row.enabled === 1, updatedAt: row.updated_at };
+      config[row.agent_id] = { enabled: row.enabled === 1, mode: row.mode, updatedAt: row.updated_at };
     }
     return config;
+  }
+
+  getAgentMode(agentId) {
+    return this.db.prepare('SELECT mode FROM agent_config WHERE agent_id = ?').get(agentId)?.mode ?? 'scripted';
+  }
+
+  setAgentMode(agentId, mode) {
+    this.db.prepare('UPDATE agent_config SET mode = ?, updated_at = ? WHERE agent_id = ?').run(mode, now(), agentId);
+    this.emit('change', { entity: 'agent', id: agentId });
+  }
+
+  // ---- settings (local only; data/ is not in Git) ----------------------------
+
+  getSetting(key) {
+    return this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+  }
+
+  setSetting(key, value) {
+    if (value == null || value === '') {
+      this.db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    } else {
+      this.db
+        .prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
+        .run(key, value, now());
+    }
+    this.emit('change', { entity: 'settings', id: key });
   }
 
   isAgentEnabled(agentId) {
@@ -289,7 +315,7 @@ export class Repository extends EventEmitter {
       .prepare(
         `SELECT * FROM events
          WHERE workflow_id IS NOT NULL
-           AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled')
+           AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call')
          ORDER BY id`,
       )
       .all()

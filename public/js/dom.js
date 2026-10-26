@@ -66,6 +66,7 @@ const ICONS = {
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
   external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  ai: 'M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z',
 };
 
 export function icon(name) {

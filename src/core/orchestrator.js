@@ -227,6 +227,35 @@ export class Orchestrator {
     return { changed: true };
   }
 
+  /**
+   * Switches how an agent decides: 'scripted' (rules) or 'ai' (GitHub Models).
+   * Like enable/disable, it applies to the next assignment.
+   * @returns {{ changed: boolean }}
+   */
+  setAgentMode(agentId, mode, { modelName } = {}) {
+    if (!this.team.has(agentId)) throw new NotFoundError(`Unknown agent "${agentId}"`);
+    if (mode !== 'scripted' && mode !== 'ai') throw new ValidationError('"mode" must be "scripted" or "ai"');
+    if (mode === 'ai' && !this.team.supportsAi?.(agentId)) {
+      throw new ValidationError(`${this.label(agentId)} is always scripted in this workspace (QA stays independent of the AI).`);
+    }
+    if (this.repository.getAgentMode(agentId) === mode) return { changed: false };
+    this.repository.setAgentMode(agentId, mode);
+    const active = this.repository.findActiveWorkflow();
+    const running = this.repository.listRunningTasks().find((t) => t.agentId === agentId);
+    this.#event(active?.id ?? null, {
+      type: 'agent.mode',
+      category: 'config',
+      actor: 'user',
+      actorKind: 'human',
+      status: 'info',
+      summary:
+        `${this.label(agentId)} switched to ${mode === 'ai' ? `AI-powered (GitHub Models${modelName ? `, ${modelName}` : ''})` : 'scripted (rules and templates, no AI)'}.` +
+        (running ? ` Its current task finishes in the previous mode.` : ''),
+      detail: { agentId, mode, model: mode === 'ai' ? modelName ?? null : null },
+    });
+    return { changed: true };
+  }
+
   // ---- read models ---------------------------------------------------------
 
   /** Files in a workflow's product folder (excluding .git), read from disk. */
@@ -304,8 +333,40 @@ export class Orchestrator {
       category: 'workflow',
       status: 'warning',
       summary: `${reason} ${consequence} Enable ${agent.label} and click Resume to continue from this stage.`,
-      detail: { stage: stage.id, agentId: agent.id },
+      detail: { stage: stage.id, agentId: agent.id, cause: 'agent_disabled' },
     });
+  }
+
+  #blockOnError(workflow, stage, agent, error) {
+    const ai = error.cause === 'ai_unavailable';
+    const reason = `${stage.title} is blocked: ${agent.label}${ai ? ' (AI)' : ''} could not do its work. ${error.message}`;
+    this.repository.updateWorkflow(workflow.id, { status: 'blocked', blockedReason: reason, verified: false });
+    this.#event(workflow.id, {
+      type: 'workflow.blocked',
+      category: 'workflow',
+      status: 'warning',
+      summary: `${reason} Fix the cause, then click Resume to run this stage again.`,
+      error: error.message,
+      detail: { stage: stage.id, agentId: agent.id, cause: error.cause ?? 'agent_unavailable', kind: error.kind ?? null },
+    });
+  }
+
+  /** Records each model request an AI agent made, with its real outcome. */
+  #recordAiCalls(ctx, calls) {
+    for (const call of calls ?? []) {
+      const tokens = call.usage?.promptTokens != null ? `, ${call.usage.promptTokens} → ${call.usage.completionTokens ?? '?'} tokens` : '';
+      const time = call.durationMs != null ? ` in ${formatMs(call.durationMs)}` : '';
+      ctx.say({
+        type: 'ai.call',
+        category: 'ai',
+        status: call.ok ? 'success' : 'failure',
+        summary: call.ok
+          ? `${ctx.agent.label} asked ${call.model} via GitHub Models to ${call.purpose}${time}${tokens}.`
+          : `${ctx.agent.label}'s request to ${call.model} (${call.purpose}, attempt ${call.attempt}) failed: ${call.error}`,
+        detail: call,
+        error: call.ok ? null : call.error,
+      });
+    }
   }
 
   async #runStage(workflow, stage, agent) {
@@ -325,7 +386,7 @@ export class Orchestrator {
       dir: this.productDir(workflow.id),
       say: (fields) => this.#event(workflow.id, { actor: agent.id, actorKind: agent.kind, taskId: task.id, category, ...fields }),
     };
-    ctx.say({ type: 'task.started', summary: `${agent.label} started: ${stage.taskTitle.toLowerCase()}.` });
+    ctx.say({ type: 'task.started', summary: `${agent.label}${agent.kind === 'ai' ? ' (AI-powered)' : ''} started: ${stage.taskTitle.toLowerCase()}.` });
 
     try {
       const handler = {
@@ -340,6 +401,11 @@ export class Orchestrator {
       this.repository.updateWorkflow(workflow.id, update);
     } catch (error) {
       this.repository.finishTask(task.id, { status: 'failed', error: error.message });
+      this.#recordAiCalls(ctx, error.aiCalls);
+      if (error.blocking) {
+        this.#blockOnError(workflow, stage, agent, error);
+        return;
+      }
       ctx.say({
         type: 'task.failed',
         category: 'error',
@@ -356,6 +422,7 @@ export class Orchestrator {
   async #analysis(ctx) {
     const { workflow, agent, say } = ctx;
     const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes });
+    this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
       say({
@@ -415,7 +482,9 @@ export class Orchestrator {
     const correcting = stage.id === 'correction';
     const defects = correcting ? (state.verification?.defects ?? []) : [];
 
-    const result = await agent.implement({ spec: state.spec, attempt, defects });
+    const currentFiles = correcting ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/')) : [];
+    const result = await agent.implement({ spec: state.spec, attempt, defects, currentFiles });
+    this.#recordAiCalls(ctx, result.aiCalls);
     const written = await this.#writeFiles(ctx, result.files);
     say({ type: correcting ? 'dev.correction' : 'dev.implementation', status: 'success', summary: result.summary, detail: { attempt, files: written } });
 
@@ -520,7 +589,14 @@ export class Orchestrator {
   async #review({ workflow, agent, say }) {
     const state = workflow.state;
     const review = await agent.review({ spec: state.spec, verification: state.verification ?? null });
-    say({ type: 'po.review', status: review.accepted ? 'success' : 'failure', summary: review.summary, detail: { unmet: review.unmet } });
+    say({
+      type: 'po.review',
+      status: review.accepted ? 'success' : 'failure',
+      summary: review.summary,
+      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null },
+      // The acceptance decision is the evidence rule, never a model's opinion.
+      ...(review.decidedBy === 'rule' ? { actorKind: 'scripted' } : {}),
+    });
 
     if (review.accepted) {
       this.#event(workflow.id, {

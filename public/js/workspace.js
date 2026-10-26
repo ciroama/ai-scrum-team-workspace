@@ -36,6 +36,13 @@ export function renderNav(ui) {
   );
 }
 
+/** One honest line about how the agents currently decide. */
+export function teamModeText(state) {
+  const ai = state.agents.filter((a) => a.mode === 'ai').map((a) => a.label);
+  if (!ai.length) return 'Scripted agents · no AI model';
+  return `${ai.join(' and ')}: AI-powered (GitHub Models) · QA: scripted`;
+}
+
 export function renderSidebarStatus(state, ui) {
   const connection = { live: 'Live updates connected', connecting: 'Connecting…', offline: 'Reconnecting…' }[ui.connection];
   mount(
@@ -48,11 +55,11 @@ export function renderSidebarStatus(state, ui) {
         'div',
         null,
         h('strong', null, 'Local workspace'),
-        h('span', { className: 'line' }, 'Scripted agents · no AI model'),
+        h('span', { className: 'line' }, teamModeText(state)),
         h('span', { className: 'line' }, h('span', { className: 'dot', style: `background: var(--${ui.connection === 'live' ? 'success' : ui.connection === 'offline' ? 'danger' : 'warning'})` }), connection),
       ),
     ),
-    h('p', { className: 'tagline' }, 'Your ideas.', h('br'), 'A scripted team.', h('br'), 'Real, verified files.'),
+    h('p', { className: 'tagline' }, 'Your ideas.', h('br'), state.agents.some((a) => a.mode === 'ai') ? 'An AI-assisted team.' : 'A scripted team.', h('br'), 'Real, verified files.'),
   );
 }
 
@@ -130,7 +137,7 @@ export function mountHome(ui, actions) {
           h('h1', { id: 'workspace-heading', className: 'workspace-title' }, 'Product Workspace'),
           h('p', { className: 'muted' }, 'Describe what you want to build. The PO, Developer and QA take it from there, and every step is recorded.'),
         ),
-        kindBadge('scripted'),
+        h('span', { id: 'workspace-kind' }),
       ),
       h('div', { id: 'tracker', className: 'tracker' }),
       h('ol', { id: 'conversation', className: 'conversation', 'aria-live': 'polite' }),
@@ -281,7 +288,14 @@ function conversationItems(state, detail, ui, actions) {
         break;
       }
       case 'po.review':
-        items.push(agentMessage(state, event, h('p', null, event.summary)));
+        items.push(
+          agentMessage(
+            state,
+            event,
+            h('p', null, event.summary),
+            d.decidedBy === 'rule' ? h('p', { className: 'muted small' }, 'Acceptance rule, not an AI decision: the PO accepts only when QA has verified every criterion.') : null,
+          ),
+        );
         break;
       case 'handoff':
         items.push(
@@ -311,6 +325,7 @@ function conversationItems(state, detail, ui, actions) {
       case 'workflow.interrupted':
       case 'agent.enabled':
       case 'agent.disabled':
+      case 'agent.mode':
       case 'task.failed':
       case 'git.unavailable':
       case 'git.failed':
@@ -355,6 +370,13 @@ export function renderComposer(state, ui, actions) {
   button.disabled = ui.submitting || Boolean(active);
   button.firstChild.textContent = ui.submitting ? 'Starting…' : 'Start workflow';
 
+  const anyAi = state.agents.some((a) => a.mode === 'ai');
+  mount('workspace-kind', anyAi ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
+  const poAi = state.agents.some((a) => a.id === 'po' && a.mode === 'ai');
+  if (poAi) {
+    mount('supported', 'The PO is AI-powered: describe any static web page (HTML, CSS, JavaScript).');
+    return finishComposer(state, ui, active);
+  }
   mount(
     'supported',
     'Supported now: ',
@@ -364,6 +386,10 @@ export function renderComposer(state, ui, actions) {
     ]),
   );
 
+  finishComposer(state, ui, active);
+}
+
+function finishComposer(state, ui, active) {
   const feedback = document.getElementById('request-feedback');
   let message = ui.feedback;
   if (!message && active) {
@@ -432,6 +458,9 @@ export function renderShortcuts(state, detail, ui) {
 
 export function renderRail(state, detail, ui, actions) {
   mount('rail-team-icon', icon('team'));
+  document.getElementById('team-note').textContent = state.agents.some((a) => a.mode === 'ai')
+    ? `${teamModeText(state)}. Model: ${state.ai.model}.`
+    : 'Scripted agents: fixed rules and templates, no AI model.';
   mount('rail-activity-icon', icon('activity'));
   const enabled = state.agents.filter((a) => a.enabled).length;
   const summary = document.getElementById('team-summary');
@@ -448,7 +477,7 @@ export function renderRail(state, detail, ui, actions) {
         h(
           'div',
           { style: 'min-width:0' },
-          h('div', { className: 'team-row-name' }, agent.label, ' ', h('span', { className: 'muted' }, agent.title === agent.label ? '' : agent.title)),
+          h('div', { className: 'team-row-name' }, agent.label, ' ', h('span', { className: 'muted' }, agent.title === agent.label ? '' : agent.title), ' ', agent.kind === 'ai' ? kindBadge('ai', state.ai.model) : null),
           h('div', { className: 'team-row-activity', title: agent.activity }, agent.finishingTask ? `Disabled · finishing "${agent.finishingTask}"` : agent.activity),
           h(
             'div',

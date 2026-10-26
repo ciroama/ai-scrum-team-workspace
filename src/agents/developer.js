@@ -1,4 +1,4 @@
-import { ScriptedAgent } from './agent.js';
+import { AgentBlockedError, ScriptedAgent } from './agent.js';
 import { getRecipe } from '../recipes/index.js';
 
 /**
@@ -27,7 +27,12 @@ export class DeveloperAgent extends ScriptedAgent {
   /** The files for a spec. Overridable, e.g. by test doubles. */
   files(spec, _attempt) {
     const recipe = getRecipe(spec.recipeId);
-    if (!recipe) throw new Error(`The scripted Developer has no code template for "${spec.recipeId}"`);
+    if (!recipe?.implementation) {
+      throw new AgentBlockedError(
+        `The scripted Developer has no code template for "${recipe?.title ?? spec.recipeId}". Switch the Developer to AI mode, then resume.`,
+        'configuration',
+      );
+    }
     return recipe.implementation(spec);
   }
 

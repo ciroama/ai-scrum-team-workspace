@@ -18,10 +18,12 @@ const { startServer } = await import('./server/app.js');
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.WORKSPACE_DATA_DIR ?? 'data';
 const previewPort = Number(process.env.PREVIEW_PORT ?? 0);
+// Advanced: point the AI agents at another OpenAI-compatible endpoint (used for testing).
+const aiEndpoint = process.env.GITHUB_MODELS_ENDPOINT || undefined;
 
 let app;
 try {
-  app = await startServer({ port, dataDir, previewPort });
+  app = await startServer({ port, dataDir, previewPort, aiEndpoint });
 } catch (error) {
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${port} is already in use. Stop the other program or start with another port, e.g.: PORT=4000 npm start`);
@@ -35,7 +37,13 @@ try {
 console.log(`AI Scrum Team Workspace running at ${app.url}`);
 console.log(`Data folder: ${dataDir} (SQLite database + generated products)`);
 if (app.legacyBackup) console.log(`The Milestone 1 database was kept as ${app.legacyBackup}.`);
-console.log('The PO, Developer and QA agents are SCRIPTED in this milestone: fixed rules and templates, no AI model or paid API.');
+const modes = app.repository.getAgentConfig();
+const aiAgents = ['po', 'dev'].filter((id) => modes[id]?.mode === 'ai');
+console.log(
+  aiAgents.length
+    ? `AI-powered agents: ${aiAgents.map((id) => (id === 'po' ? 'PO' : 'Developer')).join(', ')} (GitHub Models, free tier). QA is scripted.`
+    : 'The PO, Developer and QA agents are scripted (rules and templates, no AI model). AI can be enabled on the Team page.',
+);
 console.log('Keep this window open while you use the dashboard. Press Ctrl+C to stop.');
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

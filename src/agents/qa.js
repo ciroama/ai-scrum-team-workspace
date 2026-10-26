@@ -4,6 +4,65 @@ export const ACCEPTANCE_TEST_FILE = 'test/acceptance.test.mjs';
 
 const js = (value) => JSON.stringify(value);
 
+// Helpers for static web page checks (included when the criteria need them).
+const WEB_HELPERS = `
+const read = (path) => readFileSync(join(root, path), 'utf8');
+function productFiles(dir = root, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'test') continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) productFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+function allCss() {
+  let css = '';
+  for (const file of productFiles()) {
+    const text = readFileSync(file, 'utf8');
+    if (file.endsWith('.css')) css += '\\n' + text;
+    if (file.endsWith('.html')) {
+      for (const m of text.matchAll(/<style[^>]*>([\\s\\S]*?)<\\/style>/gi)) css += '\\n' + m[1];
+      for (const m of text.matchAll(/style\\s*=\\s*"([^"]*)"/gi)) css += '\\n;' + m[1] + ';';
+      for (const m of text.matchAll(/style\\s*=\\s*'([^']*)'/gi)) css += '\\n;' + m[1] + ';';
+    }
+  }
+  return css.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '');
+}
+const declarations = () => [...allCss().matchAll(/([a-zA-Z-]+)\\s*:\\s*([^;{}]+)/g)].map((m) => [m[1].toLowerCase(), m[2].trim().replace(/\\s*!important$/i, '')]);
+const NAMED_COLORS = { black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000', blue: '#0000ff', yellow: '#ffff00', orange: '#ffa500', purple: '#800080', pink: '#ffc0cb', gray: '#808080', grey: '#808080', brown: '#a52a2a', cyan: '#00ffff', aqua: '#00ffff', magenta: '#ff00ff', fuchsia: '#ff00ff', lime: '#00ff00', navy: '#000080', teal: '#008080', maroon: '#800000', olive: '#808000', silver: '#c0c0c0', gold: '#ffd700', violet: '#ee82ee', indigo: '#4b0082', darkgreen: '#006400', lightgreen: '#90ee90', darkblue: '#00008b', lightblue: '#add8e6', darkred: '#8b0000', crimson: '#dc143c', coral: '#ff7f50', salmon: '#fa8072', beige: '#f5f5dc', turquoise: '#40e0d0', skyblue: '#87ceeb', limegreen: '#32cd32', forestgreen: '#228b22', tomato: '#ff6347', orchid: '#da70d6' };
+function normColor(value) {
+  const v = value.trim().toLowerCase();
+  if (NAMED_COLORS[v]) return NAMED_COLORS[v];
+  let m = v.match(/^#([0-9a-f]{3})$/);
+  if (m) return '#' + [...m[1]].map((c) => c + c).join('');
+  if (/^#[0-9a-f]{6}$/.test(v)) return v;
+  m = v.match(/^rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/);
+  if (m) return '#' + m.slice(1, 4).map((n) => Number(n).toString(16).padStart(2, '0')).join('');
+  return null;
+}
+const normValue = (value) => normColor(value) ?? value.toLowerCase().replace(/\\s+/g, ' ').trim();
+const SHORTHAND = { 'background-color': 'background', 'border-color': 'border' };
+function cssSets(property, value) {
+  const want = normValue(value);
+  const found = declarations().filter(([p]) => p === property || p === SHORTHAND[property]);
+  const ok = found.some(([p, v]) => (p === property ? normValue(v) === want : v.split(/\\s+/).some((token) => normValue(token) === want)));
+  return { ok, found: found.map(([p, v]) => p + ': ' + v) };
+}
+function visibleText(html) {
+  return html
+    .replace(/<(script|style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ' ')
+    .replace(/<!--[\\s\\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+`;
+
+const WEB_CHECKS = new Set(['fileExists', 'textVisible', 'htmlTitle', 'cssProperty', 'centeredLayout']);
+
+
 /** One node:test case per acceptance criterion, from its machine-checkable `check`. */
 function testCase(criterion) {
   const name = js(`${criterion.id}: ${criterion.description}`);
@@ -36,6 +95,38 @@ function testCase(criterion) {
         `  assert.equal(element.textContent, ${js(check.expect)});`,
         '});',
       ].join('\n');
+    case 'fileExists':
+      return [`test(${name}, () => {`, `  assert.ok(existsSync(join(root, ${js(check.path)})), ${js(`${check.path} exists`)});`, '});'].join('\n');
+    case 'textVisible':
+      return [
+        `test(${name}, () => {`,
+        `  const text = visibleText(read(${js(check.path ?? 'index.html')}));`,
+        `  assert.ok(text.includes(${js(check.text)}), ${js(`visible text should contain "${check.text}"`)} + '; visible text is: "' + text.slice(0, 200) + '"');`,
+        '});',
+      ].join('\n');
+    case 'htmlTitle':
+      return [
+        `test(${name}, () => {`,
+        `  const match = read('index.html').match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i);`,
+        `  assert.equal(match ? match[1].trim() : '(no <title>)', ${js(check.text)});`,
+        '});',
+      ].join('\n');
+    case 'cssProperty':
+      return [
+        `test(${name}, () => {`,
+        `  const result = cssSets(${js(check.property)}, ${js(check.value)});`,
+        `  assert.ok(result.ok, ${js(`expected a CSS rule setting ${check.property}: ${check.value}`)} + '; found: ' + (result.found.join('; ') || 'none'));`,
+        '});',
+      ].join('\n');
+    case 'centeredLayout':
+      return [
+        `test(${name}, () => {`,
+        '  const d = declarations();',
+        '  const has = (p, re) => d.some(([pp, v]) => pp === p && re.test(v));',
+        "  const centred = has('text-align', /^center$/i) || has('justify-content', /center/i) || has('place-items', /center/i) || has('place-content', /center/i) || has('align-items', /center/i) || has('margin', /auto/i) || /<center>/i.test(read('index.html'));",
+        "  assert.ok(centred, 'expected CSS that centres content (text-align:center, flex/grid centring or auto margins)');",
+        '});',
+      ].join('\n');
     case 'fileContains':
       return [
         `test(${name}, () => {`,
@@ -56,11 +147,12 @@ export function generateAcceptanceTests(criteria) {
     "import test from 'node:test';",
     "import assert from 'node:assert/strict';",
     "import { spawnSync } from 'node:child_process';",
-    "import { existsSync, readFileSync } from 'node:fs';",
+    "import { existsSync, readFileSync, readdirSync } from 'node:fs';",
     "import { join } from 'node:path';",
     "import { fileURLToPath, pathToFileURL } from 'node:url';",
     '',
     "const root = fileURLToPath(new URL('..', import.meta.url));",
+    criteria.some((c) => WEB_CHECKS.has(c.check.type)) ? WEB_HELPERS : '',
     '// Loads a product file whether it is an ES module or a CommonJS script.',
     'const load = async (path) => {',
     '  const mod = await import(pathToFileURL(join(root, path)).href);',
@@ -78,6 +170,8 @@ function checkedFiles(criterion) {
   if (check.type === 'command') return [check.args[0]];
   if (check.type === 'export') return [check.module];
   if (check.type === 'domRender') return [check.script, check.dependency.module];
+  if (check.type === 'fileExists') return [check.path];
+  if (check.type === 'textVisible' || check.type === 'htmlTitle') return [check.path ?? 'index.html'];
   if (check.type === 'fileContains') return [check.path];
   return [];
 }
@@ -168,11 +262,14 @@ export class QaAgent extends ScriptedAgent {
         .join('; ');
 
       if (status === 'fail') {
+        // assert.ok failures only report true/false; their message is the useful part.
+        const boolean = test?.expected === 'true' && test?.actual === 'false';
+        const message = test?.error?.split('\n')[0];
         defects.push({
           criterionId: criterion.id,
           title: `${criterion.id} not met: ${criterion.description}`,
-          expected: test?.expected ?? run?.expectStdout ?? 'The criterion to be met',
-          actual: test?.actual ?? (run ? run.stdout.trim() || run.stderr.trim() : null) ?? 'No result',
+          expected: boolean ? criterion.description : test?.expected ?? run?.expectStdout ?? 'The criterion to be met',
+          actual: boolean ? message : test?.actual ?? (run ? run.stdout.trim() || run.stderr.trim() : null) ?? 'No result',
           evidence: test?.error ? `${evidence}\n\n${test.error}` : evidence,
         });
       }

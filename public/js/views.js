@@ -22,8 +22,9 @@ export const CATEGORY_LABEL = {
   completion: 'Outcome',
   workflow: 'Workflow',
   error: 'Error',
+  ai: 'AI request',
 };
-export const CATEGORY_ICON = { request: 'request', analysis: 'analysis', handoff: 'handoff', implementation: 'implementation', file: 'file', command: 'command', test: 'test', defect: 'defect', correction: 'correction', review: 'review', config: 'config', git: 'git', completion: 'completion', workflow: 'workflow', error: 'error' };
+export const CATEGORY_ICON = { request: 'request', analysis: 'analysis', handoff: 'handoff', implementation: 'implementation', file: 'file', command: 'command', test: 'test', defect: 'defect', correction: 'correction', review: 'review', config: 'config', git: 'git', completion: 'completion', workflow: 'workflow', error: 'error', ai: 'ai' };
 
 export function statusLabel(state, status) {
   return (state.statusLabels && state.statusLabels[status]) || status;
@@ -35,9 +36,9 @@ export function agentLabel(state, id) {
   return agent ? agent.label : 'System';
 }
 
-export function kindBadge(kind) {
+export function kindBadge(kind, model) {
   if (kind === 'scripted') return h('span', { className: 'badge badge-scripted', title: 'Fixed rules and templates in code. No AI model.' }, 'Scripted');
-  if (kind === 'ai') return h('span', { className: 'badge badge-ai' }, 'AI-powered');
+  if (kind === 'ai') return h('span', { className: 'badge badge-ai', title: `Decisions made by an AI model via GitHub Models${model ? ` (${model})` : ''}` }, 'AI-powered');
   if (kind === 'human') return h('span', { className: 'badge badge-human' }, 'Human');
   return h('span', { className: 'badge badge-system', title: 'Workspace infrastructure, not a team member' }, 'System');
 }
@@ -91,7 +92,7 @@ export function renderTeam(state, ui, actions) {
             { className: 'agent-id' },
             h('div', { className: 'agent-name' }, agent.label),
             h('div', { className: 'agent-title' }, agent.title),
-            kindBadge(agent.kind),
+            kindBadge(agent.kind, state.ai && state.ai.model),
           ),
           h(
             'label',
@@ -122,6 +123,24 @@ export function renderTeam(state, ui, actions) {
             h('span', { className: 'dot' }),
             EXECUTION_LABEL[agent.execution],
           ),
+        ),
+        h(
+          'div',
+          { className: 'mode-row' },
+          h('span', { className: 'state-label' }, 'Brain'),
+          agent.supportsAi
+            ? h(
+                'select',
+                {
+                  className: 'mode-select',
+                  disabled: ui.pendingModes.has(agent.id),
+                  'aria-label': `How ${agent.label} decides`,
+                  onchange: (e) => actions.setAgentMode(agent.id, e.target.value),
+                },
+                h('option', { value: 'scripted', selected: agent.mode === 'scripted' }, 'Scripted (rules, no AI)'),
+                h('option', { value: 'ai', selected: agent.mode === 'ai' }, 'AI-powered (GitHub Models)'),
+              )
+            : h('span', { className: 'muted small' }, 'Always scripted, so verification stays independent of the AI'),
         ),
         agent.finishingTask &&
           h('p', { className: 'transition-note' }, `Disabled while working: "${agent.finishingTask}" will finish safely, then ${agent.label} receives no new assignments.`),
@@ -294,6 +313,17 @@ function evidenceFor(event, state) {
         h('dl', { className: 'kv' }, d.expected != null ? [h('dt', null, 'Expected'), h('dd', null, String(d.expected))] : null, d.actual != null ? [h('dt', null, 'Actual'), h('dd', null, String(d.actual))] : null),
         d.evidence ? h('pre', { className: 'output' }, d.evidence) : null,
       ];
+    case 'ai.call':
+      return h(
+        'dl',
+        { className: 'kv' },
+        h('dt', null, 'Service'), h('dd', null, 'GitHub Models'),
+        h('dt', null, 'Model'), h('dd', { className: 'mono' }, d.model || '—'),
+        h('dt', null, 'Purpose'), h('dd', null, `${d.purpose} (attempt ${d.attempt})`),
+        h('dt', null, 'Duration'), h('dd', null, duration(d.durationMs)),
+        h('dt', null, 'Tokens'), h('dd', null, d.usage && d.usage.promptTokens != null ? `${d.usage.promptTokens} in · ${d.usage.completionTokens} out` : 'not reported'),
+        d.error ? [h('dt', null, 'Problem'), h('dd', null, d.error)] : null,
+      );
     case 'git.commit':
       return h('dl', { className: 'kv' }, h('dt', null, 'Commit'), h('dd', { className: 'mono' }, d.commit), h('dt', null, 'Files'), h('dd', { className: 'mono' }, d.files.join(', ')), h('dt', null, 'Repository'), h('dd', { className: 'mono' }, d.repository));
     case 'handoff':

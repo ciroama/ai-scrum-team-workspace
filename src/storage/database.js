@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_config (
@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS events (
   task_id     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS events_by_workflow ON events (workflow_id, id);
 CREATE INDEX IF NOT EXISTS tasks_by_workflow ON tasks (workflow_id, started_at);
 `;
@@ -81,6 +87,13 @@ function backUpLegacyDatabase(file) {
   return backup;
 }
 
+/** Additive migrations for databases created by earlier versions. */
+function migrate(db) {
+  const agentColumns = db.prepare('PRAGMA table_info(agent_config)').all().map((c) => c.name);
+  // v3: how each agent decides: 'scripted' (rules) or 'ai' (model-backed).
+  if (!agentColumns.includes('mode')) db.exec(`ALTER TABLE agent_config ADD COLUMN mode TEXT NOT NULL DEFAULT 'scripted'`);
+}
+
 /**
  * Opens (and creates if needed) the workspace SQLite database.
  * @param {string} file path to the database file, or ':memory:'
@@ -95,6 +108,7 @@ export function openDatabase(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return { db, legacyBackup };
 }

@@ -98,9 +98,13 @@ export function computeAnalytics(source, filter = {}, { recipes = [], agents = [
   // Correction cycles: QA -> Developer feedback handoffs.
   const feedback = events.filter((e) => e.type === 'handoff' && e.from === 'qa' && e.to === 'dev');
 
-  // Blocks caused by disabled agents, and how long they lasted.
-  const blocks = events.filter((e) => e.type === 'workflow.blocked');
-  const blockedPeriods = blocks.map((block) => {
+  // Blocks caused by disabled agents (older events carry no cause; they were
+  // all disabled-agent blocks), and how long any block lasted.
+  const allBlocks = events.filter((e) => e.type === 'workflow.blocked');
+  const blocks = allBlocks.filter((e) => !e.detail?.cause || e.detail.cause === 'agent_disabled');
+  const otherBlocks = allBlocks.filter((e) => e.detail?.cause && e.detail.cause !== 'agent_disabled');
+  const aiCalls = events.filter((e) => e.type === 'ai.call');
+  const blockedPeriods = allBlocks.map((block) => {
     const end = events.find((e) => e.workflowId === block.workflowId && e.id > block.id && (e.type === 'workflow.resumed' || e.type === 'workflow.cancelled'));
     return { agentId: block.detail?.agentId ?? null, ms: end ? durationMs(block.ts, end.ts) : null };
   });
@@ -219,9 +223,29 @@ export function computeAnalytics(source, filter = {}, { recipes = [], agents = [
       label: 'Average time blocked',
       unit: 'duration',
       value: mean(closedPeriods),
-      detail: blocks.length ? `${closedPeriods.length} ended · ${blockedPeriods.length - closedPeriods.length} still blocked` : null,
+      detail: allBlocks.length ? `${closedPeriods.length} ended · ${blockedPeriods.length - closedPeriods.length} still blocked` : null,
       source: SOURCE.calculated,
-      basis: 'Time from each workflow.blocked event to the next resume or cancel of that workflow. Blocks that have not ended are not averaged.',
+      basis: 'Time from each workflow.blocked event (any cause) to the next resume or cancel of that workflow. Blocks that have not ended are not averaged.',
+    },
+    {
+      key: 'otherBlocks',
+      label: 'Blocks: AI or configuration',
+      unit: 'count',
+      value: enough ? otherBlocks.length : null,
+      detail: enough && otherBlocks.length ? `${otherBlocks.filter((b) => b.detail.cause === 'ai_unavailable').length} AI service · ${otherBlocks.filter((b) => b.detail.cause !== 'ai_unavailable').length} configuration` : null,
+      source: SOURCE.recorded,
+      basis: 'Recorded workflow.blocked events caused by the AI service being unavailable (network, token, rate limit, unusable answer) or by a configuration mismatch.',
+    },
+    {
+      key: 'aiCalls',
+      label: 'AI requests',
+      unit: 'count',
+      value: enough ? aiCalls.length : null,
+      detail: aiCalls.length
+        ? `${aiCalls.filter((c) => c.status === 'success').length} succeeded · ${sum(aiCalls.map((c) => (c.detail?.usage?.promptTokens ?? 0) + (c.detail?.usage?.completionTokens ?? 0)))} tokens`
+        : null,
+      source: SOURCE.recorded,
+      basis: 'Recorded ai.call events: every request the AI-powered PO or Developer sent to GitHub Models, with its real outcome and token usage as reported by the service.',
     },
   ];
 

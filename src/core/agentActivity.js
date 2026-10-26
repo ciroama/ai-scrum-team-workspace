@@ -32,7 +32,9 @@ export function describeTeam({ team, config, workflow, tasks, events }) {
     } else if (workflow?.status === 'running' || workflow?.status === 'blocked') {
       const stage = STAGES[workflow.stage];
       if (workflow.status === 'blocked' && stage.agent === agent.id) {
-        activity = `Needed to continue: ${stage.title} is blocked until ${agent.label} is enabled`;
+        activity = enabled
+          ? `Needed to continue: ${workflow.blockedReason ?? `${stage.title} is blocked`}`
+          : `Needed to continue: ${stage.title} is blocked until ${agent.label} is enabled`;
       } else if (!enabled) {
         activity = UPCOMING_AGENTS[workflow.stage].includes(agent.id)
           ? `Disabled: the workflow will block if ${agent.label} is still disabled when needed`
@@ -58,6 +60,8 @@ export function describeTeam({ team, config, workflow, tasks, events }) {
     return {
       ...agent.profile,
       enabled,
+      mode: config[agent.id]?.mode ?? 'scripted',
+      supportsAi: Boolean(team.supportsAi?.(agent.id)),
       configUpdatedAt: config[agent.id]?.updatedAt ?? null,
       finishingTask: !enabled && running ? running.title : null,
       execution,

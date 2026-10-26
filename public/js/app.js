@@ -6,6 +6,7 @@ import { dateTime, duration, h, icon, mount } from './dom.js';
 import { renderResults, renderTeam, renderTimeline, statusLabel, verificationBadge } from './views.js';
 import * as ws from './workspace.js';
 import { analyticsQuery, mountAnalytics, renderAnalytics } from './analytics.js';
+import { mountAiPanel, renderAiStatus } from './aiPanel.js';
 
 const ui = {
   route: 'home',
@@ -17,6 +18,8 @@ const ui = {
   feedback: null,
   connection: 'connecting',
   pendingToggles: new Set(),
+  pendingModes: new Set(),
+  aiMessage: null,
   pendingAction: null,
   previewBusy: false,
   analyticsFilter: { projectId: 'all', from: '', to: '' },
@@ -148,6 +151,41 @@ const actions = {
     }
   },
 
+  async setAgentMode(agentId, mode) {
+    ui.pendingModes.add(agentId);
+    render();
+    try {
+      await api(`/api/agents/${agentId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+    } catch (error) {
+      showError(`Could not change how the agent works: ${error.message}`);
+    } finally {
+      ui.pendingModes.delete(agentId);
+      await refresh();
+    }
+  },
+
+  async saveAi(changes) {
+    try {
+      await api('/api/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+      ui.aiMessage = { tone: 'success', text: changes.token === '' ? 'Token removed.' : 'Saved. Click "Test connection" to check it with a real request.' };
+    } catch (error) {
+      ui.aiMessage = { tone: 'error', text: error.message };
+    }
+    await refresh();
+  },
+
+  async testAi() {
+    ui.aiMessage = { tone: 'info', text: 'Testing the connection to GitHub Models…' };
+    render();
+    try {
+      const result = await api('/api/ai/test', { method: 'POST' });
+      ui.aiMessage = { tone: result.ok ? 'success' : 'error', text: result.message };
+    } catch (error) {
+      ui.aiMessage = { tone: 'error', text: error.message };
+    }
+    await refresh();
+  },
+
   async resume(workflowId) {
     await workflowAction(workflowId, 'resume');
   },
@@ -254,10 +292,12 @@ function mountRoute() {
         h(
           'section',
           { className: 'panel' },
-          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three scripted agents and you. Enable or disable an agent to change which work it can be assigned.'))),
+          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three agents and you. Enable or disable an agent to change which work it can be assigned, and choose whether the PO and the Developer are scripted or AI-powered.'))),
+          h('div', { id: 'ai-panel' }),
           h('div', { className: 'team-grid' }, h('div', { id: 'human-card' }), h('div', { id: 'agent-cards', className: 'agent-cards' })),
         ),
       );
+      mountAiPanel(state, actions);
       break;
     case 'projects':
       ws.mountSection('Projects', 'Every workflow you have started, newest first. Select one to inspect it.', 'projects', 'ol', 'project-list');
@@ -329,6 +369,7 @@ function render() {
       break;
     case 'team':
       renderTeam(state, ui, actions);
+      renderAiStatus(state, ui);
       break;
     case 'projects':
       renderProjects();

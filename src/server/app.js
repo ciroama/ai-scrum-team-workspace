@@ -8,10 +8,11 @@ import { Repository } from '../storage/repository.js';
 import { ConflictError, NotFoundError, Orchestrator, REQUEST_LIMITS, ValidationError } from '../core/orchestrator.js';
 import { describeTeam } from '../core/agentActivity.js';
 import { STAGES, STAGE_ORDER, WORKFLOW_STATUS } from '../core/stages.js';
-import { catalogue, getRecipe } from '../recipes/index.js';
+import { AI_WEB_RECIPE, catalogue, getRecipe } from '../recipes/index.js';
+import { TeamRoster } from '../agents/roster.js';
+import { AiSettings } from '../ai/aiSettings.js';
 import { PreviewError, PreviewService } from '../preview/previewService.js';
 import { computeAnalytics, parseDateFilter } from '../analytics/analytics.js';
-import { createTeam } from '../agents/team.js';
 import { AgentKind } from '../agents/agent.js';
 import { resolveInside } from '../actions/writeFile.js';
 
@@ -69,10 +70,13 @@ function statusFor(error) {
  * @param {Map<string, object>} [options.team]
  * @param {string} [options.gitBinary]
  * @param {number} [options.previewPort]  0 (default) picks a free port
+ * @param {string} [options.aiEndpoint]  GitHub Models endpoint (overridable for tests)
  */
-export function createApp({ dataDir, team = createTeam(), gitBinary, previewPort = 0 }) {
+export function createApp({ dataDir, team, gitBinary, previewPort = 0, aiEndpoint }) {
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
+  const aiSettings = new AiSettings({ repository, ...(aiEndpoint ? { endpoint: aiEndpoint } : {}) });
+  team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: () => aiSettings.client() });
   const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary });
   orchestrator.init();
 
@@ -129,6 +133,7 @@ export function createApp({ dataDir, team = createTeam(), gitBinary, previewPort
       workspaceEvents: focus ? [] : repository.listWorkspaceEvents(),
       git: await orchestrator.git(),
       preview: preview.status(),
+      ai: aiSettings.status(),
       legacyBackup,
     };
   }
@@ -168,10 +173,22 @@ export function createApp({ dataDir, team = createTeam(), gitBinary, previewPort
         return computeAnalytics(
           repository.analyticsSource(),
           { projectId: params.get('project') || 'all', from, to },
-          { recipes: catalogue(orchestrator.recipes), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
+          { recipes: catalogue([...orchestrator.recipes, AI_WEB_RECIPE]), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
         );
       },
     ],
+    ['GET', /^\/api\/ai$/, () => aiSettings.status()],
+    [
+      'PUT',
+      /^\/api\/ai$/,
+      async (req) => {
+        const { token, model } = await readJsonBody(req);
+        const result = aiSettings.update({ token, model });
+        if (!result.ok) throw new HttpError(400, result.error);
+        return aiSettings.status();
+      },
+    ],
+    ['POST', /^\/api\/ai\/test$/, () => aiSettings.test()],
     ['GET', /^\/api\/preview$/, () => preview.status()],
     [
       'POST',
@@ -190,8 +207,12 @@ export function createApp({ dataDir, team = createTeam(), gitBinary, previewPort
       'PUT',
       /^\/api\/agents\/([\w-]+)$/,
       async (req, [agentId]) => {
-        const { enabled } = await readJsonBody(req);
-        return orchestrator.setAgentEnabled(agentId, enabled);
+        const body = await readJsonBody(req);
+        if (body.enabled === undefined && body.mode === undefined) throw new HttpError(400, 'Send "enabled" and/or "mode".');
+        let changed = false;
+        if (body.mode !== undefined) changed = orchestrator.setAgentMode(agentId, body.mode, { modelName: aiSettings.model }).changed || changed;
+        if (body.enabled !== undefined) changed = orchestrator.setAgentEnabled(agentId, body.enabled).changed || changed;
+        return { changed };
       },
     ],
   ];

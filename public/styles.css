@@ -1542,6 +1542,10 @@ table.data td.num {
   font-variant-numeric: tabular-nums;
 }
 
+.chip[hidden] {
+  display: none;
+}
+
 .user-card {
   display: flex;
   align-items: center;
@@ -2602,4 +2606,83 @@ p.kpi-empty {
 
 .table-scroll table.data {
   min-width: 620px;
+}
+
+/* ---- AI provider and agent modes ------------------------------------------------------- */
+
+.mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  font-size: var(--fs-xs);
+}
+
+.mode-select,
+.ai-form input {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--inset);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  color-scheme: dark;
+}
+
+.ai-panel {
+  margin-bottom: var(--s4);
+}
+
+.ai-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: end;
+  margin-top: var(--s3);
+}
+
+.ai-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.ai-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+@media (max-width: 700px) {
+  .ai-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ai-status {
+  margin-top: var(--s3);
+}
+
+.ai-status > * + * {
+  margin-top: var(--s2);
+}
+
+.ai-panel ol {
+  margin: var(--s2) 0 0;
+  padding-left: 18px;
+  color: var(--text-soft);
+}
+
+.cat-ai .event-icon {
+  color: var(--cyan);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+
+.cat-ai[data-status='failure'] .event-icon {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.45);
 }

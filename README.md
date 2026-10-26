@@ -17,24 +17,57 @@ watch every step:
 A lightweight orchestrator (infrastructure, not a team member) assigns work,
 checks agent availability, and records every step.
 
-### Scripted agents, not AI
+### Scripted or AI-powered agents
 
-**In this milestone all three agents are scripted.** They follow fixed rules
-and templates written in this repository. They do not use an AI model, do not
-reason autonomously and do not generate their messages with AI. The dashboard
-labels every agent message as **Scripted**.
+Each agent works in one of two modes, shown on every card and message:
 
-What is real: the requirements document, the product files written to disk,
-the `node --test` run and its results, the Git commits, and every recorded
-event and handoff. Nothing is simulated or pre-scripted as a timeline.
+- **Scripted** (default): fixed rules and templates written in this
+  repository. No AI model, no autonomous reasoning.
+- **AI-powered** (PO and Developer only): decisions come from a model on
+  **GitHub Models**, the free, rate-limited AI service included with every
+  GitHub account. No paid API is used.
 
-The agent interfaces are designed so that an AI-powered agent could replace a
-scripted one later without changing the dashboard. No paid API or service is
-used.
+**QA is always scripted.** It turns the PO's acceptance criteria into
+deterministic tests and runs them for real, so verification stays independent
+of the model that wrote the code. The PO's final acceptance is also a rule
+(accepted only when QA verified every criterion) and is labelled as such.
 
-### Supported requests
+What is real in both modes: the requirements document, the product files
+written to disk, the `node --test` run and its results, the Git commits, and
+every recorded event and handoff. Every AI request is recorded too, with the
+model, duration and token counts reported by the service.
 
-The PO matches requests against a catalogue of supported request types. This
+#### Turning on the AI (GitHub Models)
+
+1. Create a token at <https://github.com/settings/personal-access-tokens/new>.
+   Give it a name and an expiration, and under **Permissions** add **Models**
+   with **Read-only** access. No repository access is needed.
+2. In the dashboard open **Team**. Paste the token in **AI provider: GitHub
+   Models**, click **Save**, then **Test connection**.
+3. On the PO and Developer cards set **Brain** to **AI-powered (GitHub
+   Models)**.
+
+The token is stored only on your computer, in `data/workspace.db`. It is never
+uploaded to GitHub and never sent back to the browser. When the PO or the
+Developer is AI-powered, your request text and the generated files are sent
+to GitHub Models over the internet.
+
+Limits and behaviour:
+
+- The free tier is rate-limited (GitHub documents roughly 50–150 requests per
+  day, depending on the model). A workflow uses about 2–4 requests.
+- If the service cannot be used (no internet, invalid token, limit reached,
+  an unusable answer), the workflow is **Blocked** with the reason. Fix it
+  and click **Resume**; nothing is invented in the meantime.
+- In AI mode the team can build any **static web page** (HTML, CSS, browser
+  JavaScript). The PO asks for clarification when a request cannot be built
+  that way.
+- The default model is `openai/gpt-4.1-mini`. You can change it on the Team
+  page.
+
+### Supported requests (scripted PO)
+
+The scripted PO matches requests against a catalogue of supported request types. This
 milestone supports one: **Hello World web application**. The PO recognises
 wording such as "Build a Hello World application" or "Build a simple Hello
 World web application". Anything else gets an honest "needs clarification"

@@ -31,8 +31,9 @@ Browser (public/)                         Node.js server (src/)
 
 - **You (human)**: submit requirements, enable/disable agents, resume or
   cancel blocked workflows.
-- **PO, Developer, QA**: the three agents. All are `AgentKind.SCRIPTED` in this
-  milestone. `AgentKind.AI` is reserved for future model-backed agents.
+- **PO, Developer, QA**: the three agents. Each is `AgentKind.SCRIPTED` by
+  default. The PO and the Developer can be switched to `AgentKind.AI`
+  (GitHub Models); QA is always scripted.
 - **Orchestrator**: infrastructure. It makes no product decisions.
 
 ## Agent contracts (structured inputs and outputs)
@@ -160,6 +161,40 @@ statistic below was already derivable from what the workspace records.
   red `#dc4a4f`). Every bar is labelled with text and value, and has a hover
   tooltip.
 
+## AI-powered agents (GitHub Models)
+
+- `src/ai/githubModels.js` is a minimal client for the OpenAI-compatible
+  GitHub Models endpoint (`https://models.github.ai/inference/chat/completions`,
+  bearer token with `models:read`, JSON responses). Errors are typed as
+  `AiUnavailableError` (`not_configured`, `auth`, `rate_limit`, `network`,
+  `http`, `invalid_response`).
+- `src/ai/aiSettings.js` keeps the token and model in the local `settings`
+  table, and offers a connection test. The API never returns the token.
+- `src/agents/roster.js` gives the orchestrator, for each role, the scripted
+  or AI agent that matches `agent_config.mode`. Only the PO and the Developer
+  have AI versions. **QA is always scripted.**
+- `src/agents/ai/aiAgents.js`: the AI PO and AI Developer implement the same
+  contracts as the scripted agents. `src/ai/contracts.js` validates every
+  reply:
+  - The PO may only use deterministic check types (`fileExists`,
+    `fileContains`, `textVisible`, `htmlTitle`, `cssProperty`,
+    `centeredLayout`). `index.html` is always required.
+  - The Developer may only write relative, non-hidden files with allowed
+    extensions, outside `test/`, without external URLs, and must include
+    `index.html`.
+  - An invalid reply is retried once with the problems listed, then the
+    workflow blocks.
+- The orchestrator treats errors marked `blocking` (AI unavailable, or a
+  configuration mismatch such as AI PO + scripted Developer) as a
+  **block with reason**, which can be resumed, not as a failure. Every
+  model request becomes an `ai.call` event (model, purpose, attempt,
+  duration, tokens, outcome). `workflow.blocked` events carry a `cause`
+  (`agent_disabled`, `ai_unavailable`, `configuration`).
+- AI products use the `ai-static-web` product type, which is previewed like
+  any static site.
+- Analytics counts disabled-agent blocks separately from AI/configuration
+  blocks, and reports the AI requests and their token totals.
+
 ## HTTP API
 
 | Method | Path | Purpose |
@@ -169,7 +204,9 @@ statistic below was already derivable from what the workspace records.
 | GET | `/api/workflows/:id` | workflow, tasks, timeline, product files read from disk |
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
-| PUT | `/api/agents/:id` | `{ "enabled": true \| false }` |
+| PUT | `/api/agents/:id` | `{ "enabled": true \| false, "mode": "scripted" \| "ai" }` |
+| GET / PUT | `/api/ai` | AI provider status (no token returned) / save token and model |
+| POST | `/api/ai/test` | send one real test request to GitHub Models |
 | GET | `/api/preview` | Live Preview status |
 | POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
 | POST | `/api/preview/refresh` | re-check (and reload) the current preview |
@@ -203,7 +240,15 @@ page. The right column's **Live Preview** panel shows the running product.
 
 ## Known limitations
 
-- Agents are scripted. Only the Hello World web application recipe exists.
+- The scripted PO supports only the Hello World web application recipe. The
+  AI-powered PO supports any static web page.
+- AI quality depends on the model, and the free GitHub Models tier is
+  rate-limited. QA checks for static pages are deterministic but heuristic
+  (for example "centred" accepts any common centring CSS; colours must match
+  exactly after normalisation).
+- The connection to GitHub Models was tested only against a local stand-in
+  server, because the development environment cannot reach the service. The
+  first real request happens on the user's machine.
 - The scripted Developer produces correct code, so the correction loop does
   not occur in normal use. It is implemented and covered by automated tests
   that use a deliberately defective test double (never used by the app).

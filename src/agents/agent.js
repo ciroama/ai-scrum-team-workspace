@@ -56,3 +56,16 @@ export class ScriptedAgent extends Agent {
     super(profile, AgentKind.SCRIPTED);
   }
 }
+
+/**
+ * An agent cannot do its work right now for a reason the user can fix
+ * (configuration, AI service unavailable). Workflows block with this
+ * message instead of failing, and can be resumed.
+ */
+export class AgentBlockedError extends Error {
+  constructor(message, cause = 'agent_unavailable') {
+    super(message);
+    this.blocking = true;
+    this.cause = cause;
+  }
+}
