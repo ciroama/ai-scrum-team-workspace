@@ -1,257 +1,392 @@
-# ai-scrum-team-workspace
-A local-first AI Scrum Team Workspace with real agent orchestration and execution tracking.
+# AI Scrum Team Workspace
 
-## What it is
+A local-first dashboard for **studying how a small Scrum team of AI agents
+works**. You describe a product, and a Product Owner, a Developer and a QA
+agent turn it into real files that are tested for real. Every step is
+recorded: requirements, handoffs, files, commands, test results, defects,
+corrections, Git commits and every AI request.
 
-A dashboard where you, the product requester, describe what you want built.
-A team of three agents turns the request into a real, tested product, and you
-watch every step:
+> **Status: experimental.** This is a personal research project, not a
+> product. The team builds small static web pages; the point is to observe
+> the team at work, not the quality of what it builds.
+
+## Contents
+
+- [Why this project exists](#why-this-project-exists)
+- [Ground rules](#ground-rules)
+- [The team](#the-team)
+- [How a request flows](#how-a-request-flows)
+- [What the dashboard shows](#what-the-dashboard-shows)
+- [Getting started](#getting-started)
+- [Turning on the AI (Claude Code)](#turning-on-the-ai-claude-code)
+- [Running on an older Mac (virtual machine)](#running-on-an-older-mac-virtual-machine)
+- [Configuration](#configuration)
+- [Data, privacy and security](#data-privacy-and-security)
+- [How it is built](#how-it-is-built)
+- [Tests](#tests)
+- [Limitations](#limitations)
+- [History](#history)
+- [Disclaimer](#disclaimer)
+
+## Why this project exists
+
+I want to understand how a team of AI agents behaves when it works the way a
+Scrum team does:
+
+- how a Product Owner turns a vague request into requirements;
+- how a Developer implements them;
+- how QA verifies the result and sends defects back;
+- how the team handles a change to something it already built.
+
+To learn anything from that, **everything the dashboard shows has to be
+real**. A nice-looking simulation would be useless, so the project follows a
+few strict rules (below). The products are deliberately small, such as a
+Hello World page or a coloured landing page, so that a whole cycle takes
+minutes and is easy to inspect.
+
+## Ground rules
+
+- **Only real events.** Every message, status and number in the dashboard
+  comes from something that actually happened and was recorded. Nothing is
+  invented: no fake conversations, no assumed test results, no sample data.
+- **Honest labels.** Every agent and every message says whether it came
+  from a **scripted** agent (fixed rules written in this repository) or an
+  **AI-powered** one (a Claude model). Scripted behaviour is never presented
+  as AI.
+- **Independent verification.** QA is always scripted. It turns the
+  acceptance criteria into deterministic tests and runs them with
+  `node --test`, so the model that wrote the code never grades its own work.
+  A result counts as verified only if QA actually ran the checks.
+- **Exactly three agents: PO, Developer and QA.** The orchestrator that
+  assigns work is infrastructure, not a team member. You, the human, are not
+  an agent: you make the product decisions.
+- **Local-first, no paid API.** Everything runs on your own computer. The AI
+  agents use Claude Code with your existing Claude subscription. No API key
+  and no pay-per-use billing.
+- **Blocked, not faked.** When something is missing (an agent is disabled,
+  the AI is unavailable, the usage limit is reached), the workflow stops as
+  **Blocked** with the reason. You fix the cause and click **Resume**.
+
+## The team
 
 | Member | Kind | Responsibility |
 |---|---|---|
-| **You** | Human | Submit requirements, give direction, make product decisions |
-| **PO** (Product Owner) | Scripted or AI-powered agent | Turns the request into requirements and acceptance criteria, asks for clarification, reviews the verified result |
-| **Developer** | Scripted or AI-powered agent | Implements the requirements as real files, fixes defects reported by QA |
-| **QA** (Quality Assurance) | Scripted agent | Turns acceptance criteria into tests, runs them, reports results and defects, re-tests corrections |
+| **You** | Human | Describe what to build, ask for changes, enable or disable agents, resume or cancel blocked work |
+| **PO** (Product Owner) | Scripted or AI-powered | Turns a request into requirements and machine-checkable acceptance criteria; asks for clarification; applies change requests to the requirements; reviews the verified result |
+| **Developer** | Scripted or AI-powered | Writes the product files; changes them for change requests; fixes defects reported by QA |
+| **QA** (Quality Assurance) | Always scripted | Generates one test per acceptance criterion, runs all tests, reports results and defects, and re-tests every correction |
+| Orchestrator | Infrastructure | Assigns each stage to the responsible agent if it is enabled, executes the work, records every step |
 
-A lightweight orchestrator (infrastructure, not a team member) assigns work,
-checks agent availability, and records every step.
+### Scripted or AI-powered
 
-### Scripted or AI-powered agents
+You choose each agent's **Brain** on the Team page:
 
-Each agent works in one of two modes, shown on every card and message:
+- **Scripted** (the default): rules and templates in `src/agents/` and
+  `src/recipes/`, with no AI model. The scripted PO recognises one kind of
+  request, a **Hello World web application**, and honestly answers "needs
+  clarification" for anything else.
+- **AI-powered** (PO and Developer): the agent's decisions come from a
+  Claude model through Claude Code. The team can then build any **static
+  web page** (HTML, CSS and browser JavaScript, with no server and no
+  external resources).
 
-- **Scripted** (default): fixed rules and templates written in this
-  repository. No AI model, no autonomous reasoning.
-- **AI-powered** (PO and Developer only): decisions come from a Claude model
-  through **Claude Code**, using your Claude subscription (for example Claude
-  Pro). No API key and no paid API usage.
+The PO's **final acceptance is always a rule**, even when the PO is
+AI-powered: the product is accepted only if QA verified every acceptance
+criterion. The dashboard labels that decision as rule-based.
 
-**QA is always scripted.** It turns the PO's acceptance criteria into
-deterministic tests and runs them for real, so verification stays independent
-of the model that wrote the code. The PO's final acceptance is also a rule
-(accepted only when QA verified every criterion) and is labelled as such.
+## How a request flows
 
-What is real in both modes: the requirements document, the product files
-written to disk, the `node --test` run and its results, the Git commits, and
-every recorded event and handoff. Every AI request is recorded too, with the
-model, duration and token counts reported by Claude Code.
+```mermaid
+flowchart LR
+    U([You]) -->|request| A[PO: requirement analysis]
+    A -->|needs clarification| U
+    A -->|requirements + acceptance criteria| I[Developer: implementation]
+    I -->|files + commit| V[QA: verification]
+    V -->|defects| C[Developer: correction]
+    C --> V
+    V -->|all criteria pass| R[PO: final review]
+    R --> D([Completed and verified])
+```
 
-#### Turning on the AI (Claude Code)
-
-Claude Code must be installed and logged in on the computer that runs the
-workspace. It needs macOS 13 or newer, Windows or Linux; on an older Mac, run
-the workspace in a Linux virtual machine (see below).
-
-1. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
-2. Run `claude` once in a terminal and log in with your Claude account
-   (choose the subscription, not the Console/API account).
-3. In the dashboard open **Team**, then **AI provider: Claude Code** →
-   **Test connection**. It sends one small real request.
-4. On the PO and Developer cards set **Brain** to **AI-powered (Claude Code)**.
-
-Limits and behaviour:
-
-- Each request runs `claude -p` once, in an empty temporary folder, with all
-  tools disabled: the model only answers, it cannot read or change files.
-  The workspace writes the files itself after checking the answer.
-- If `ANTHROPIC_API_KEY` is set in your environment, it is not passed to
-  Claude Code, so the subscription login is always used (no paid API).
-- Requests count against your subscription's usage limit. A workflow uses
-  about 2–4 requests. The default model is `sonnet`, which uses less of the
-  limit than `opus`; change it on the Team page.
-- If Claude Code cannot be used (not installed, not logged in, limit
-  reached, no answer within 5 minutes, an unusable answer), the workflow is
-  **Blocked** with the reason. Fix it and click **Resume**; nothing is
-  invented in the meantime.
-- In AI mode the team can build any **static web page** (HTML, CSS, browser
-  JavaScript). The PO asks for clarification when a request cannot be built
-  that way.
-- Your request text and the generated files are sent to Anthropic over the
-  internet.
-
-### Supported requests (scripted PO)
-
-The scripted PO matches requests against a catalogue of supported request types. This
-milestone supports one: **Hello World web application**. The PO recognises
-wording such as "Build a Hello World application" or "Build a simple Hello
-World web application". Anything else gets an honest "needs clarification"
-reply that lists the supported types. New types (for example a website or a
-Breakout game) are added as recipes in `src/recipes/` without changing the
-dashboard.
-
-The generated product is a static web page (`index.html`, `app.js`,
-`src/greet.js`, `styles.css`, tests, README). You can open it by double-clicking
-`index.html`. QA verifies it with Node tests, without a browser.
-
-## Using the dashboard
-
-- **Home** — the Product Workspace conversation: your request, the PO's
-  requirements, handoffs between agents, QA's verdict and the PO's review, all
-  taken from recorded events. A compact stage tracker shows where the workflow
-  is. If a workflow is blocked, a banner with **Resume** and **Cancel** appears
-  in the conversation.
-- **AI Scrum Team** (right column and Team page) — each agent shows its
-  **availability** (Enabled/Disabled, which is configuration) and, separately,
-  its **execution status** (Idle, Working, Waiting, Completed, Failed). Use the
-  switch to enable or disable an agent.
-- **Team Activity** — every recorded event with evidence: files, commands,
-  output, test results, defects, commits, configuration changes.
-- **Repository** — the result: outcome, acceptance criteria, test results,
-  open issues, generated files (read from disk) and Git commits.
-- **Projects** — every product with its requests (the first one and each
-  change request). From here you open a request, see the requirements,
-  request a change, or **delete** a product. **Delete all products** resets
-  the workspace.
-- **Requirements** — the requirements and acceptance criteria the PO agreed,
-  version by version, with what each change request added, changed or
-  removed.
-- **Live Preview** (right column) — the generated product running locally,
-  shown in the dashboard. See below.
-- **Analytics** — statistics calculated from recorded data, with a project
-  filter and an optional date range. See below.
-
-### New products and change requests
-
-Under the request box, **For** chooses what the request is for:
-
-- **A new product** — the team starts from scratch in a new folder. The
-  **New request** button clears the workspace for this.
-- **Change: <product>** — a change request (CR) to an existing product. The
-  PO starts from the product's current requirements and writes the next
-  version; the Developer changes the existing files; QA re-checks **every**
-  acceptance criterion, old and new. The product keeps one folder and one
-  Git repository, with a commit for every iteration. Change requests need
-  the PO and the Developer in AI-powered mode: the scripted PO only
-  recognises new Hello World requests, and says so.
-
-### Deleting
-
-Deleting a product (Projects or Repository page) removes, **for good**, its
-requests, their conversation and Team Activity, its statistics in Analytics,
-and its files with their Git history. A product whose request is running
-cannot be deleted until it finishes or is blocked. You are always asked to
-confirm.
-
-### Live Preview
-
-Click **Start preview** to run the product of the workflow shown on the
-dashboard. The product is served by a separate local preview server on its
-own port (127.0.0.1, port 3001 by default, or `PREVIEW_PORT`).
-The status is **Not Started**, **Starting**, **Running** or **Error**.
-"Running" is shown only after the product's page has actually been loaded
-from the preview server. Use the refresh button to reload and re-check it, or
-the open button to view it in a new browser tab. There is only one preview
-server: starting another workflow's preview switches it, and the old address
-stops serving. If the product is missing, or the server cannot start, the panel
-shows the reason.
-
-### Analytics
-
-All numbers are calculated from the workflows, tasks and events stored in
-`data/workspace.db`. Nothing is sample data. Each metric is labelled
-**Recorded** (read directly from records or events) or **Calculated**
-(derived from them), and the page explains how each one is computed. When
-there is not enough data, it shows "Not enough data yet" instead of a number.
-
-- **Project filter:** *All Projects*, or one project. A project is the product
-  type the PO assigned; workflows the PO never analysed are grouped as
-  *Unassigned*. Each workflow belongs to exactly one project, so nothing is
-  counted twice.
-- **Date filter:** by the date each workflow was submitted.
-- **Not available:** waiting time between handoffs (the next agent starts
-  immediately; only time blocked by a disabled agent is measured), agent idle
-  time, and Milestone 1 history.
-
-### Enabling and disabling agents
-
-- A disabled agent receives no new assignments. The orchestrator checks
-  availability before every assignment.
-- If a disabled agent is needed, the workflow stops as **Blocked** at that
-  stage and explains why. Re-enable the agent and click **Resume**. The
-  workflow continues from the saved stage; earlier work is not repeated.
-- If you disable an agent while it is working, its current task finishes
-  safely, then it receives no new work.
-- QA verification is never reported as passed unless QA actually ran the
-  checks.
-- The configuration is saved in the local database and survives restarts.
+1. **Requirement analysis (PO).** The PO writes `REQUIREMENTS.md` with
+   requirements and acceptance criteria. Each criterion has a check that QA
+   can test automatically, such as "the page shows the text *hello world*"
+   or "the background colour is green". If the request is unclear or cannot
+   be built, the PO asks you instead of guessing.
+2. **Implementation (Developer).** The product files are written to disk and
+   committed to the product's own Git repository.
+3. **Verification (QA).** QA generates `test/acceptance.test.mjs` from the
+   criteria, runs every test, and reports a verdict with evidence.
+4. **Correction (Developer).** If tests fail, QA sends the defects back. The
+   Developer gets up to three attempts in total; then the workflow ends as
+   failed and the open defects stay visible.
+5. **Final review (PO).** The PO accepts the product only if QA verified
+   every criterion.
 
 One workflow runs at a time. A blocked workflow keeps that slot until you
 resume or cancel it.
 
-## Requirements
+### New products and change requests
 
-- **Node.js 22 LTS, version 22.13 or newer** (not 23 or later). No packages to
-  install, no Docker, no Homebrew, no database server, no paid services.
-- **Optional: Git.** On macOS Git comes with Apple's Command Line Tools
-  (`xcode-select --install`). Without it, products are still built, tested and
-  saved; the dashboard explains that no commit was made.
-- Designed for macOS 11 Big Sur (Intel), 8 GB RAM. The server uses little
-  memory and listens on `localhost` only.
+Below the request box, **For** chooses what a request is for:
 
-## Setup on macOS 11 (Big Sur)
+- **A new product**: the team starts from scratch. The **New request**
+  button clears the workspace for this.
+- **Change: *product name***: a **change request** to a product that
+  already exists. The PO starts from the product's current requirements and
+  writes the next version, listing what it added, changed or removed. The
+  Developer changes the existing files. QA re-runs the checks for **every**
+  criterion, old and new, so a change that breaks something is caught. All
+  iterations of a product share one folder and one Git repository.
 
-1. Install Node.js 22 with the macOS installer (`.pkg`) from
-   <https://nodejs.org/dist/latest-v22.x/>. Do not install Node 24 or newer;
-   it does not support macOS 11.
-2. Check in Terminal: `node -v` should print `v22.13.0` or a later 22.x.
-3. Download the project: while signed in to github.com, open
-   <https://github.com/ciroama/ai-scrum-team-workspace/archive/refs/heads/claude/bold-einstein-mb3ux1.zip>
-   and unzip it (or use `git clone` and `git checkout claude/bold-einstein-mb3ux1`).
+Change requests need the PO and the Developer in AI-powered mode. The
+scripted PO only recognises new Hello World requests, and says so.
 
-## Run
+## What the dashboard shows
 
-In Terminal, go to the project folder (type `cd `, drag the folder into the
-window, press Enter), then:
+| Page | What you find there |
+|---|---|
+| **Home** | The conversation between you and the team, built from recorded events; a stage tracker; the request box. Blocked workflows show **Resume** and **Cancel**. |
+| **Projects** | Every product with its requests: the first one and each change request. Open a request, see the requirements, request a change, or delete the product. |
+| **Requirements** | Every version of a product's requirements and acceptance criteria, with the changes each change request made. |
+| **Team** | The three agents, with **Enabled/Disabled** (availability) and **Brain** (scripted or AI-powered); the AI provider settings with a real connection test. |
+| **Team Activity** | Every recorded event with its evidence: files with checksums, commands with output and exit codes, test results, defects, commits, AI requests, and configuration changes. |
+| **Repository** | The result: outcome, acceptance criteria with their status, test results, open issues, files read from disk, and Git commits. |
+| **Analytics** | Statistics calculated from the recorded data, with a project filter and a date range. |
+| **Live Preview** (right column) | The generated page, served by a separate local preview server and shown in the dashboard. |
+
+Details worth knowing:
+
+- **Agent availability.** A disabled agent gets no new work. If it is
+  needed, the workflow is blocked at that stage. Re-enable it and click
+  **Resume**; earlier stages are not repeated. An agent disabled mid-task
+  finishes that task first.
+- **AI requests.** Every request to the model is recorded with model,
+  purpose, duration, token counts and outcome. An answer that does not match
+  the agent's contract is retried once, then the workflow blocks with the
+  reason.
+- **Live Preview** reports **Running** only after the page has actually been
+  loaded from the preview server.
+- **Analytics** labels each number **Recorded** (read directly from the
+  records) or **Calculated** (derived from them), explains how it is
+  computed, and shows "Not enough data yet" rather than a guess.
+- **Deleting** a product (on Projects or Repository) is permanent and needs
+  your confirmation. It removes the product's requests, conversations,
+  activity, statistics, files and Git history. **Delete all products** resets
+  the workspace. A product whose request is running cannot be deleted.
+
+## Getting started
+
+### Requirements
+
+- **Node.js 22 LTS, version 22.13 or newer**, but not 23 or later. Nothing
+  else to install: no npm packages, no database server, no Docker.
+- **Git** (recommended). Without it, products are still built, tested and
+  saved, and the dashboard says that no commit was made.
+- **Claude Code**, only for AI-powered agents (see below).
+
+Developed and tested on macOS and Linux (Windows is untested). The server
+uses little memory and listens on `127.0.0.1` only.
+
+### Install and run
 
 ```bash
-npm test       # platform tests, including real end-to-end workflows
-npm start      # then open http://localhost:3000
+git clone https://github.com/ciroama/ai-scrum-team-workspace.git
+cd ai-scrum-team-workspace
+npm test     # the full test suite, including real end-to-end workflows
+npm start    # then open http://localhost:3000
 ```
 
-Keep the Terminal window open while you use the dashboard. Press `Ctrl + C`
-to stop it.
+Keep the terminal open while you use the dashboard. Press `Ctrl + C` to
+stop it.
 
-Options (environment variables):
+To try it without any AI: leave all agents scripted and ask for
+*"Build a simple Hello World web application"*.
 
-- `PORT` — HTTP port (default `3000`), e.g. `PORT=4000 npm start`
-- `PREVIEW_PORT` — port of the Live Preview server (default `3001`; `0` picks
-  a free port)
-- `WORKSPACE_DATA_DIR` — where the database and generated products are stored
-  (default `./data`, ignored by Git). Delete it to start fresh.
-- `CLAUDE_BINARY` — the Claude Code command, if it is not `claude`
+On **macOS 11 (Big Sur)**, install Node.js 22 with the `.pkg` installer
+from <https://nodejs.org/dist/latest-v22.x/>. Newer Node versions do not
+support macOS 11. Claude Code does not run on macOS 11 either; see
+[Running on an older Mac](#running-on-an-older-mac-virtual-machine).
 
-If you used Milestone 1, its database is kept as `data/workspace.v1.db`.
+## Turning on the AI (Claude Code)
 
-## Running in a virtual machine (older Macs)
+The AI-powered agents use [Claude Code](https://code.claude.com/docs/en/overview),
+logged in with **your own Claude subscription**, for example Claude Pro.
 
-On macOS 11 Claude Code cannot be installed, so the workspace runs inside an
-Ubuntu Server VM (UTM 4.7.5, the last UTM version for macOS 11) and you use
-it from the Mac's browser.
+1. Install Claude Code on the computer that runs the workspace:
+   `curl -fsSL https://claude.ai/install.sh | bash`. It needs macOS 13 or
+   newer, Linux, or Windows.
+2. Run `claude` once in a terminal and log in with your Claude account.
+   Choose the subscription login, not an Anthropic Console (API) account.
+3. In the dashboard open **Team** → **AI provider: Claude Code** → **Test
+   connection**. It sends one small real request and shows the result.
+4. On the PO and Developer cards, set **Brain** to **AI-powered (Claude
+   Code)**.
 
-1. In the VM install Node.js 22 and Git: `sudo apt install -y nodejs npm git`
-   (Ubuntu 26.04 ships Node.js 22.22), then Claude Code and its login as
-   described above.
-2. Clone this repository in the VM, then run `npm test` and `npm start` there.
-3. On the Mac, open Terminal and connect with a tunnel for both ports
-   (replace the user name and the VM address):
+How the integration behaves:
+
+- **Text only.** Each AI request runs `claude -p` once, in an empty
+  temporary folder, with **all tools disabled**. The model can only answer.
+  The workspace checks the answer against the agent's contract and then
+  writes the files itself. Files must stay inside the product folder, use
+  allowed file types, keep out of QA's `test/` folder, and load nothing from
+  the internet.
+- **Subscription, not paid API.** `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN` are removed from Claude Code's environment, so a key
+  set on your computer can never turn this into pay-per-use billing.
+- **Usage limits.** Requests count against your subscription's usage limit.
+  A workflow uses about 2–4 requests, and more when QA finds defects. The
+  default model is `sonnet`, which uses less of the limit than `opus`; you
+  can change it on the Team page. When the limit is reached, the workflow
+  blocks with the reason; resume it later.
+- **Failures are explicit.** If Claude Code is not installed, not logged in,
+  over its limit, or gives no answer within 5 minutes, the workflow blocks
+  and says why.
+
+## Running on an older Mac (virtual machine)
+
+Claude Code needs macOS 13 or newer. On an older Mac (this project was built
+on an Intel MacBook Air with macOS 11 and 8 GB of RAM), run the workspace
+in a small Linux virtual machine and use it from the Mac's browser.
+
+1. Install [UTM](https://mac.getutm.app/). For macOS 11, use
+   [UTM 4.7.5](https://github.com/utmapp/UTM/releases/tag/v4.7.5), the last
+   version that supports it.
+2. Create a VM with **Virtualize → Linux** and an **Ubuntu Server** (amd64)
+   ISO: 4 GB of memory, 2 CPU cores, about 25 GB of disk. During
+   installation, choose **Install OpenSSH server**. Before the first boot,
+   remove the ISO from the VM's drives.
+3. In the VM, install Node.js and Git, then Claude Code, and log in:
 
    ```bash
-   ssh -L 3000:127.0.0.1:3000 -L 3001:127.0.0.1:3001 ciro@192.168.64.2
+   sudo apt update && sudo apt install -y nodejs npm git   # check: node -v shows v22.13 or newer
+   curl -fsSL https://claude.ai/install.sh | bash
+   claude                                                  # log in once, then /exit
    ```
 
-4. Open <http://localhost:3000> in the Mac's browser. The Live Preview uses
-   port 3001 through the same tunnel. Keep the SSH window open.
+4. In the VM, clone this repository and run `npm test` and `npm start`.
+5. On the Mac, open a terminal and connect with a tunnel for the dashboard
+   and the Live Preview ports. Replace the user name and address with your
+   VM's; `hostname -I` in the VM shows the address.
 
-Inside the VM the workspace still listens only on 127.0.0.1; the tunnel is
+   ```bash
+   ssh -L 3000:127.0.0.1:3000 -L 3001:127.0.0.1:3001 <user>@<vm-address>
+   ```
+
+6. Open <http://localhost:3000> on the Mac. Keep the SSH window open.
+
+Inside the VM, the workspace still listens only on `127.0.0.1`; the tunnel is
 the only way in.
 
-## Where things are stored
+## Configuration
 
-- `data/workspace.db` — SQLite: workflows, tasks, events, agent configuration
-- `data/workflows/<workflow-id>/product/` — the generated product, with its own
-  local Git repository. It is separate from this dashboard's repository: every
-  Git command uses explicit `--git-dir`/`--work-tree` paths, and nothing is
-  pushed anywhere.
+Environment variables, for example `PORT=4000 npm start`:
 
-See [docs/architecture.md](docs/architecture.md) for the design.
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `3000` | Dashboard port |
+| `PREVIEW_PORT` | `3001` | Live Preview port (`0` picks a free one) |
+| `WORKSPACE_DATA_DIR` | `./data` | Where the database and the generated products are stored |
+| `CLAUDE_BINARY` | `claude` | The Claude Code command, if it is not on the `PATH` as `claude` |
+
+Everything else (agent availability, agent modes, the model) is set in the
+dashboard and saved in the local database.
+
+## Data, privacy and security
+
+- **Everything stays on your computer** in `data/`, which Git ignores:
+  - `data/workspace.db` (SQLite): products, workflows, tasks, events,
+    settings;
+  - `data/workflows/<product-id>/product/`: the generated files, with their
+    own Git repository.
+- **Product repositories are isolated.** Every Git command runs with
+  explicit `--git-dir`/`--work-tree` paths, so it can never touch this
+  dashboard's repository. Nothing is ever pushed anywhere.
+- **No credentials are stored.** The Claude login belongs to Claude Code.
+- **What leaves your computer:** only when the PO or the Developer is
+  AI-powered. Then your request text, the requirements and the product files
+  are sent to Anthropic through Claude Code.
+- **Local only.** The dashboard and the preview server listen on
+  `127.0.0.1`. There is no login, so do not expose them to a network.
+- **Generated code runs locally.** QA runs the generated tests with Node.js
+  on your computer, and the preview serves the generated page. The AI
+  produces only static web pages, checked against the contract before they
+  are written.
+- **Deletion is real.** Deleting a product removes its records and its
+  folder.
+
+## How it is built
+
+Plain Node.js (ES modules) and plain browser JavaScript. There is **no build
+step and no dependencies**. It uses the built-in `node:sqlite` for storage,
+`node --test` for tests, and Server-Sent Events for live updates.
+
+```
+src/
+  main.js              entry point (checks the Node.js version)
+  server/app.js        HTTP API, static files, live updates (SSE)
+  core/                orchestrator (workflow state machine), stages, agent activity
+  agents/              scripted PO, Developer, QA; team roster; ai/ AI-powered PO and Developer
+  ai/                  Claude Code client, AI settings, contracts that validate model answers
+  recipes/             request types the scripted agents know (Hello World)
+  storage/             SQLite schema and repository
+  actions/             file writing, command running, TAP parsing, isolated Git
+  preview/             Live Preview server
+  analytics/           statistics computed from recorded data
+public/                dashboard (HTML, CSS, JavaScript modules)
+test/                  node:test suites
+docs/architecture.md   design details: state machine, events, contracts, API
+```
+
+The full design, including every event type, the agent contracts, the HTTP
+API and the database schema, is in
+[docs/architecture.md](docs/architecture.md).
+
+## Tests
+
+```bash
+npm test
+```
+
+The suite runs real end-to-end workflows: real files, real `node --test`
+runs and real Git commits in temporary folders. It also covers blocking and
+resuming, the correction loop, change requests, deletion, Live Preview,
+Analytics and the database migrations.
+
+The AI paths run against a stand-in `claude` command that returns prepared
+answers, so the tests need no account and use no quota. The real Claude Code
+integration was checked by hand.
+
+## Limitations
+
+- The **scripted** agents know one request type: a Hello World web
+  application.
+- The **AI-powered** team builds static web pages only.
+- QA's checks are deterministic but simple: visible text, page title, files,
+  CSS property values (colours compared after normalisation) and centred
+  layout. QA does not use a browser, so it cannot judge visual quality.
+- QA itself is not AI-powered, by design.
+- One workflow at a time. An interrupted stage reruns from its start.
+- The AI's output depends on the model. Answers that break the contract
+  block the workflow instead of being used.
+- No user accounts, and not meant for a shared network.
+
+## History
+
+The project was built in milestones, all recorded in the Git history:
+
+1. A dashboard with scripted agents and a real Hello World workflow.
+2. A full workflow engine: enable and disable agents, block and resume, the
+   correction loop, and a team workspace layout.
+3. Live Preview and Analytics.
+4. AI-powered PO and Developer. The first version used GitHub Models, which
+   GitHub retired on 30 July 2026. It was replaced by Claude Code, using a
+   Claude subscription.
+5. Products with change requests, versioned requirements, and permanent
+   deletion.
+
+## Disclaimer
+
+An independent personal project, not affiliated with or endorsed by
+Anthropic or GitHub. Using Claude Code is subject to Anthropic's terms and
+your subscription's usage limits.
