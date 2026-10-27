@@ -34,6 +34,16 @@ export function parseDateFilter(value, name) {
   return new Date(time).toISOString();
 }
 
+/** The workflows a filter selects: one product (or all), submitted in [from, to). */
+export function selectWorkflows(source, { projectId = ALL_PROJECTS, from = null, to = null } = {}) {
+  return source.workflows.filter(
+    (w) =>
+      (projectId === ALL_PROJECTS || (w.productId ?? w.id) === projectId) &&
+      (!from || w.createdAt >= from) &&
+      (!to || w.createdAt < to),
+  );
+}
+
 /**
  * @param {{ workflows: object[], tasks: object[], events: object[] }} source  from Repository#analyticsSource
  * @param {{ projectId?: string, from?: string | null, to?: string | null }} filter
@@ -60,12 +70,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     .sort((a, b) => a.title.localeCompare(b.title));
 
   // Selection.
-  const selected = source.workflows.filter(
-    (w) =>
-      (projectId === ALL_PROJECTS || projectOf(w) === projectId) &&
-      (!from || w.createdAt >= from) &&
-      (!to || w.createdAt < to),
-  );
+  const selected = selectWorkflows(source, { projectId, from, to });
   const ids = new Set(selected.map((w) => w.id));
   const tasks = source.tasks.filter((t) => ids.has(t.workflowId));
   const events = source.events.filter((e) => ids.has(e.workflowId));

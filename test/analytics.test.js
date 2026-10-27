@@ -180,3 +180,42 @@ test('GET /api/analytics applies the filters and rejects invalid dates', async (
   assert.equal((await fetch(`${app.url}/api/analytics?from=yesterday-ish`)).status, 400);
   assert.ok(all.kpis.every((k) => ['recorded', 'calculated'].includes(k.source) && k.basis));
 });
+
+test('CSV exports contain the recorded data and follow the filters', async (t) => {
+  const app = await startServer({ port: 0, dataDir: await tempDir(t) });
+  t.after(() => app.close());
+  const product = await app.orchestrator.submit(HELLO).done;
+  await app.orchestrator.submit('=HYPERLINK("http://x"), "quoted"').done;
+
+  const get = async (path) => {
+    const res = await fetch(app.url + path);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return { res, bytes, text: bytes.toString('utf8') };
+  };
+  const rows = (text) => text.replace(/^﻿/, '').trim().split('\r\n');
+
+  const stats = await get('/api/analytics/export/statistics.csv?project=all');
+  assert.equal(stats.res.status, 200);
+  assert.match(stats.res.headers.get('content-type'), /^text\/csv/);
+  assert.match(stats.res.headers.get('content-disposition'), /attachment; filename="ai-scrum-statistics-\d{4}-\d{2}-\d{2}\.csv"/);
+  assert.ok(stats.text.startsWith('﻿'), 'Excel reads it as UTF-8');
+  assert.equal(rows(stats.text)[0], 'section,metric,value,unit,detail,source,how it is computed');
+  assert.ok(rows(stats.text).some((r) => r.startsWith('KPI,Total workflows,2,count')));
+
+  const requests = await get('/api/analytics/export/requests.csv');
+  const lines = rows(requests.text);
+  assert.equal(lines.length, 3, 'header + one row per request');
+  const hello = lines.find((l) => l.startsWith(product.id));
+  assert.match(hello, /,new product,Build a simple Hello World web application\.,/);
+  assert.match(hello, /,completed,true,0,1,/);
+  // Text that a spreadsheet would run as a formula is neutralised, quotes are escaped.
+  assert.ok(lines.some((l) => l.includes('"\'=HYPERLINK(""http://x""), ""quoted"""')));
+
+  const scoped = await get(`/api/analytics/export/tasks.csv?project=${product.id}`);
+  const tasks = rows(scoped.text);
+  assert.equal(tasks[0], 'task id,request id,product id,agent,stage,task,status,started at,finished at,duration ms,error');
+  assert.equal(tasks.length - 1, app.repository.listTasks(product.id).length);
+  assert.ok(tasks.slice(1).every((l) => l.split(',')[1] === product.id));
+
+  assert.equal((await fetch(`${app.url}/api/analytics/export/requests.csv?from=nope`)).status, 400);
+});

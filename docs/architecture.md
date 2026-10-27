@@ -256,6 +256,7 @@ The first AI integration used GitHub Models. That service was retired on
 | POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
 | POST | `/api/preview/refresh` | re-check (and reload) the current preview |
 | POST | `/api/preview/stop` | stop the preview server |
+| GET | `/api/analytics/export/{statistics,requests,tasks}.csv` | the same filters, as a CSV download (UTF-8 with BOM; text that a spreadsheet would run as a formula is prefixed with `'`) |
 | GET | `/api/analytics` | `?project=all\|<product id>&from=<iso>&to=<iso>` |
 | GET | `/api/stream` | Server-Sent Events: `workflow-event`, `change`, `preview` |
 

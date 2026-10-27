@@ -181,7 +181,11 @@ Details worth knowing:
   loaded from the preview server.
 - **Analytics** labels each number **Recorded** (read directly from the
   records) or **Calculated** (derived from them), explains how it is
-  computed, and shows "Not enough data yet" rather than a guess.
+  computed, and shows "Not enough data yet" rather than a guess. **Export
+  CSV** downloads, with the current filters, the statistics on the page, one
+  row per request (status, verification, clarifications, corrections, tests,
+  AI requests and tokens), or one row per agent task, for your own analysis
+  in a spreadsheet.
 - **Deleting** a product (on Projects or Repository) is permanent and needs
   your confirmation. It removes the product's requests, conversations,
   activity, statistics, files and Git history. **Delete all products** resets

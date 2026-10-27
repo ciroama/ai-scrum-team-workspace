@@ -13,6 +13,7 @@ import { TeamRoster } from '../agents/roster.js';
 import { AiSettings } from '../ai/aiSettings.js';
 import { PreviewError, PreviewService } from '../preview/previewService.js';
 import { computeAnalytics, parseDateFilter } from '../analytics/analytics.js';
+import { requestsCsv, statisticsCsv, tasksCsv } from '../analytics/export.js';
 import { AgentKind } from '../agents/agent.js';
 import { resolveInside } from '../actions/writeFile.js';
 
@@ -29,6 +30,15 @@ class HttpError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
+  }
+}
+
+/** A route result sent as a file download instead of JSON. */
+class FileResponse {
+  constructor(name, type, body) {
+    this.name = name;
+    this.type = type;
+    this.body = body;
   }
 }
 
@@ -183,6 +193,18 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     return result;
   }
 
+  const agentLabels = () => [...team.values()].map((a) => ({ id: a.id, label: a.label }));
+
+  /** The Analytics filters of a request: ?project=all|<product id>&from=<iso>&to=<iso>. */
+  function analyticsFilter(req) {
+    const params = new URL(req.url, 'http://localhost').searchParams;
+    try {
+      return { projectId: params.get('project') || 'all', from: parseDateFilter(params.get('from'), 'from'), to: parseDateFilter(params.get('to'), 'to') };
+    } catch (error) {
+      throw new HttpError(400, error.message);
+    }
+  }
+
   const routes = [
     ['GET', /^\/api\/state$/, () => state()],
     ['GET', /^\/api\/workflows\/([\w-]+)$/, (_req, [id]) => workflowDetail(id)],
@@ -198,21 +220,21 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     [
       'GET',
       /^\/api\/analytics$/,
-      (req) => {
-        const params = new URL(req.url, 'http://localhost').searchParams;
-        let from;
-        let to;
-        try {
-          from = parseDateFilter(params.get('from'), 'from');
-          to = parseDateFilter(params.get('to'), 'to');
-        } catch (error) {
-          throw new HttpError(400, error.message);
-        }
-        return computeAnalytics(
-          repository.analyticsSource(),
-          { projectId: params.get('project') || 'all', from, to },
-          { agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
-        );
+      (req) => computeAnalytics(repository.analyticsSource(), analyticsFilter(req), { agents: agentLabels() }),
+    ],
+    [
+      'GET',
+      /^\/api\/analytics\/export\/(statistics|requests|tasks)\.csv$/,
+      (req, [kind]) => {
+        const filter = analyticsFilter(req);
+        const source = repository.analyticsSource();
+        const body = {
+          statistics: () => statisticsCsv(source, filter, { agents: agentLabels() }),
+          requests: () => requestsCsv(source, filter),
+          tasks: () => tasksCsv(source, filter, { agents: agentLabels() }),
+        }[kind]();
+        const day = new Date().toISOString().slice(0, 10);
+        return new FileResponse(`ai-scrum-${kind}-${day}.csv`, 'text/csv; charset=utf-8', body);
       },
     ],
     ['GET', /^\/api\/products$/, () => repository.listProducts()],
@@ -312,6 +334,15 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
           const match = pathname.match(pattern);
           if (!match || req.method !== method) continue;
           const result = await handler(req, match.slice(1));
+          if (result instanceof FileResponse) {
+            res.writeHead(200, {
+              'Content-Type': result.type,
+              'Content-Disposition': `attachment; filename="${result.name}"`,
+              'Cache-Control': 'no-store',
+            });
+            res.end(result.body);
+            return;
+          }
           const [status, body] = Array.isArray(result) ? result : [200, result];
           sendJson(res, status, body);
           return;

@@ -29,13 +29,23 @@ function localDayToIso(day, addDays = 0) {
   return new Date(y, m - 1, d + addDays).toISOString();
 }
 
-export function analyticsQuery(filter) {
+function filterParams(filter) {
   const params = new URLSearchParams();
   params.set('project', filter.projectId || 'all');
   if (filter.from) params.set('from', localDayToIso(filter.from));
   if (filter.to) params.set('to', localDayToIso(filter.to, 1)); // the end date is inclusive
-  return `/api/analytics?${params}`;
+  return params;
 }
+
+export function analyticsQuery(filter) {
+  return `/api/analytics?${filterParams(filter)}`;
+}
+
+const EXPORTS = [
+  ['statistics', 'Statistics', 'The numbers on this page: KPIs, outcomes and agent activity'],
+  ['requests', 'Requests', 'One row per request: status, verification, clarifications, corrections, tests, AI requests and tokens'],
+  ['tasks', 'Tasks', 'One row per agent task: agent, stage, status and duration'],
+];
 
 // ---- tooltip (one shared element) -------------------------------------------------------
 
@@ -77,6 +87,12 @@ export function mountAnalytics(ui, actions) {
         'div',
         { className: 'view-head' },
         h('div', null, h('h1', null, 'Analytics'), h('p', { className: 'muted' }, 'Statistics calculated from the workflows, tasks and events recorded in this workspace.')),
+        h(
+          'div',
+          { className: 'export-actions', role: 'group', 'aria-label': 'Export as CSV, with the current filters' },
+          h('span', { className: 'muted small' }, 'Export CSV:'),
+          EXPORTS.map(([kind, label, title]) => h('a', { id: `an-export-${kind}`, className: 'btn btn-sm', href: '#', download: '', title }, label)),
+        ),
       ),
       h(
         'div',
@@ -96,6 +112,8 @@ export function mountAnalytics(ui, actions) {
 export function renderAnalytics(data, ui) {
   const body = document.getElementById('an-body');
   if (!body) return;
+  // Exports follow the filters currently applied.
+  for (const [kind] of EXPORTS) document.getElementById(`an-export-${kind}`).href = `/api/analytics/export/${kind}.csv?${filterParams(ui.analyticsFilter)}`;
   if (ui.analyticsError) {
     mount(body, h('div', { className: 'feedback', dataset: { tone: 'error' } }, `Analytics could not be loaded: ${ui.analyticsError}`));
     return;
