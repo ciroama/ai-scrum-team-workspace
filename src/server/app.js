@@ -8,7 +8,7 @@ import { Repository } from '../storage/repository.js';
 import { ConflictError, NotFoundError, Orchestrator, REQUEST_LIMITS, ValidationError } from '../core/orchestrator.js';
 import { describeTeam } from '../core/agentActivity.js';
 import { STAGES, STAGE_ORDER, WORKFLOW_STATUS } from '../core/stages.js';
-import { AI_WEB_RECIPE, catalogue, getRecipe } from '../recipes/index.js';
+import { catalogue, getRecipe } from '../recipes/index.js';
 import { TeamRoster } from '../agents/roster.js';
 import { AiSettings } from '../ai/aiSettings.js';
 import { PreviewError, PreviewService } from '../preview/previewService.js';
@@ -211,7 +211,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
         return computeAnalytics(
           repository.analyticsSource(),
           { projectId: params.get('project') || 'all', from, to },
-          { recipes: catalogue([...orchestrator.recipes, AI_WEB_RECIPE]), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
+          { agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) },
         );
       },
     ],

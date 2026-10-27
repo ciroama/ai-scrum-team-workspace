@@ -170,10 +170,11 @@ the dashboard server and the orchestrator:
 `workflow.cancelled` events. **No new event recording was needed.** Every
 statistic below was already derivable from what the workspace records.
 
-- **Project** = the workflow's `recipe_id` (stable, set by the PO).
-  Workflows without one are "Unassigned". Every task and event belongs to one
-  workflow, and every workflow to one project, so filtering by workflow ids
-  cannot double count. "All Projects" is the union.
+- **Project** = a product: its first request and all its change requests
+  (`workflows.product_id`). A product without agreed requirements is named
+  after its first request. Every task and event belongs to one workflow and
+  every workflow to one product, so filtering by workflow ids cannot double
+  count. "All Projects" is the union.
 - **Recorded metrics:** workflow counts by status, tests passed/failed
   (sums of the recorded runs), correction cycles (QA → Developer feedback
   handoffs), blocks by disabled agents (with the agent), tasks per agent.
@@ -254,7 +255,7 @@ The first AI integration used GitHub Models. That service was retired on
 | POST | `/api/preview` | `{ "workflowId": "..." }` start or switch the preview |
 | POST | `/api/preview/refresh` | re-check (and reload) the current preview |
 | POST | `/api/preview/stop` | stop the preview server |
-| GET | `/api/analytics` | `?project=all\|<id>\|unassigned&from=<iso>&to=<iso>` |
+| GET | `/api/analytics` | `?project=all\|<product id>&from=<iso>&to=<iso>` |
 | GET | `/api/stream` | Server-Sent Events: `workflow-event`, `change`, `preview` |
 
 ## Dashboard layout

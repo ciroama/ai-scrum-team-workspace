@@ -1,18 +1,18 @@
 // Analytics: statistics calculated only from persisted records.
 //
 // Sources (all already recorded by the workspace):
-//  - workflows table: status, verified flag, recipe (project), created/finished times
+//  - workflows table: status, verified flag, product, created/finished times
 //  - tasks table: agent, stage, status, start/finish times
 //  - events: test.results (real test runner counts), handoff (QA -> Developer
 //    feedback = correction cycle), workflow.blocked (+ the agent that caused
 //    it), workflow.resumed / workflow.cancelled (end of a blocked period)
 //
-// Every task and event belongs to exactly one workflow and every workflow to
-// exactly one project, so filtering by workflow id never counts a record
+// A project is a product: the first request and its change requests. Every
+// task and event belongs to exactly one workflow and every workflow to
+// exactly one product, so filtering by workflow id never counts a record
 // twice. "All Projects" is simply the union of all workflows.
 
 export const ALL_PROJECTS = 'all';
-export const UNASSIGNED = 'unassigned';
 
 const SOURCE = { recorded: 'recorded', calculated: 'calculated' };
 
@@ -38,21 +38,26 @@ export function parseDateFilter(value, name) {
  * @param {{ workflows: object[], tasks: object[], events: object[] }} source  from Repository#analyticsSource
  * @param {{ projectId?: string, from?: string | null, to?: string | null }} filter
  *        from is inclusive, to is exclusive (ISO timestamps, compared with workflow creation time)
- * @param {{ recipes: Array<{ id: string, title: string }>, agents: Array<{ id: string, label: string }> }} catalogue
+ * @param {{ agents: Array<{ id: string, label: string }> }} catalogue
  */
-export function computeAnalytics(source, filter = {}, { recipes = [], agents = [] } = {}) {
+export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const projectId = filter.projectId || ALL_PROJECTS;
   const from = filter.from ?? null;
   const to = filter.to ?? null;
-  const projectOf = (workflow) => workflow.recipeId ?? UNASSIGNED;
-  const recipeTitle = (id) => recipes.find((r) => r.id === id)?.title ?? id;
+  const projectOf = (workflow) => workflow.productId ?? workflow.id;
 
-  // Project list (always from all workflows, so the selector is stable).
-  const projectCounts = new Map();
-  for (const workflow of source.workflows) projectCounts.set(projectOf(workflow), (projectCounts.get(projectOf(workflow)) ?? 0) + 1);
-  const projects = [...projectCounts.entries()]
-    .map(([id, workflows]) => ({ id, title: id === UNASSIGNED ? 'Unassigned (no product type yet)' : recipeTitle(id), workflows }))
-    .sort((a, b) => (a.id === UNASSIGNED) - (b.id === UNASSIGNED) || a.title.localeCompare(b.title));
+  // Project list (always from all workflows, so the selector is stable). The
+  // title is the one from the product's latest agreed requirements; a
+  // product without any is named after its first request.
+  const byProduct = new Map();
+  for (const workflow of source.workflows) byProduct.set(projectOf(workflow), [...(byProduct.get(projectOf(workflow)) ?? []), workflow]);
+  const projects = [...byProduct.entries()]
+    .map(([id, workflows]) => {
+      const title = workflows.filter((w) => w.state?.spec).at(-1)?.state.spec.title;
+      const first = workflows[0].requestText;
+      return { id, title: title ?? `“${first.length > 40 ? `${first.slice(0, 40)}…` : first}”`, workflows: workflows.length };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
 
   // Selection.
   const selected = source.workflows.filter(
@@ -258,7 +263,7 @@ export function computeAnalytics(source, filter = {}, { recipes = [], agents = [
     agents: agentRows,
     workflows: selected.map((w) => ({ id: w.id, createdAt: w.createdAt, status: w.status, verified: w.verified, projectId: projectOf(w) })),
     notes: [
-      'Projects are identified by the product type the PO assigned to the workflow. Workflows the PO never analysed (needs clarification, or blocked before analysis) are grouped as "Unassigned".',
+      'A project is a product: its first request and all its change requests. A product without agreed requirements is named after its first request.',
       'Date filters use the time each workflow was submitted.',
       `Agent execution times use finished tasks only${interruptedTasks ? `; ${interruptedTasks} task(s) cut off by a shutdown are excluded` : ''}.`,
       'Tasks run back to back, so measured execution times are short; they are the real durations recorded for each task.',

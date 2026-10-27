@@ -1,14 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeAnalytics, parseDateFilter, UNASSIGNED } from '../src/analytics/analytics.js';
-import { catalogue } from '../src/recipes/index.js';
+import { computeAnalytics, parseDateFilter } from '../src/analytics/analytics.js';
 import { createTeam } from '../src/agents/team.js';
 import { startServer } from '../src/server/app.js';
 import { DefectiveDeveloper, setup, tempDir } from './helpers.js';
 
 const HELLO = 'Build a simple Hello World web application.';
-const PROJECT = 'hello-world-web';
-const catalogueFor = (team) => ({ recipes: catalogue(), agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) });
+const catalogueFor = (team) => ({ agents: [...team.values()].map((a) => ({ id: a.id, label: a.label })) });
 const analyse = ({ repository, team }, filter) => computeAnalytics(repository.analyticsSource(), filter, catalogueFor(team));
 const kpi = (result, key) => result.kpis.find((k) => k.key === key);
 const value = (result, key) => kpi(result, key).value;
@@ -78,29 +76,33 @@ test('metrics come from the recorded workflows, tasks and events of real runs', 
 
 test('the project filter scopes every metric and All Projects never double counts', async (t) => {
   const ctx = await setup(t);
-  await ctx.orchestrator.submit(HELLO).done;
-  await ctx.orchestrator.submit('Build a futuristic Breakout game').done;
-  await ctx.orchestrator.submit('Build a Hello World application').done;
+  const product = await ctx.orchestrator.submit(HELLO).done;
+  // A change request belongs to the same product (the scripted PO declines it).
+  await ctx.orchestrator.submit('Make the text blue', { productId: product.id }).done;
+  const other = await ctx.orchestrator.submit('Build a futuristic Breakout game').done;
 
   const all = analyse(ctx);
-  assert.deepEqual(all.projects.map((p) => [p.id, p.workflows]), [[PROJECT, 2], [UNASSIGNED, 1]]);
-  assert.equal(all.projects.find((p) => p.id === PROJECT).title, 'Hello World web application');
+  assert.deepEqual(
+    all.projects.map((p) => [p.id, p.title, p.workflows]),
+    [[other.id, '“Build a futuristic Breakout game”', 1], [product.id, 'Hello World web application', 2]],
+  );
 
-  const hello = analyse(ctx, { projectId: PROJECT });
-  const unassigned = analyse(ctx, { projectId: UNASSIGNED });
+  const hello = analyse(ctx, { projectId: product.id });
+  const breakout = analyse(ctx, { projectId: other.id });
   assert.equal(value(hello, 'total'), 2);
-  assert.equal(value(unassigned, 'total'), 1);
-  assert.equal(value(unassigned, 'testsPassed'), null, 'no QA runs in this project: not enough data');
-  assert.equal(value(unassigned, 'successRate'), null);
-  assert.ok(hello.workflows.every((w) => w.projectId === PROJECT));
+  assert.equal(value(breakout, 'total'), 1);
+  assert.equal(value(breakout, 'testsPassed'), null, 'no QA runs in this project: not enough data');
+  assert.equal(value(breakout, 'successRate'), null);
+  assert.ok(hello.workflows.every((w) => w.projectId === product.id));
 
   // Summing the projects gives exactly All Projects.
   for (const key of ['total', 'completed', 'blocks']) {
-    assert.equal((value(hello, key) ?? 0) + (value(unassigned, key) ?? 0), value(all, key), key);
+    assert.equal((value(hello, key) ?? 0) + (value(breakout, key) ?? 0), value(all, key), key);
   }
   assert.equal(value(hello, 'testsPassed'), value(all, 'testsPassed'));
+  assert.equal(value(hello, 'total'), 2, 'the change request counts towards its product');
   for (const agent of all.agents) {
-    const parts = [hello, unassigned].map((r) => r.agents.find((a) => a.id === agent.id).tasksCompleted);
+    const parts = [hello, breakout].map((r) => r.agents.find((a) => a.id === agent.id).tasksCompleted);
     assert.equal(parts[0] + parts[1], agent.tasksCompleted, agent.id);
   }
 
@@ -173,7 +175,7 @@ test('GET /api/analytics applies the filters and rejects invalid dates', async (
   await app.orchestrator.submit(HELLO).done;
   const all = await (await fetch(`${app.url}/api/analytics?project=all`)).json();
   assert.equal(value(all, 'total'), 1);
-  const scoped = await (await fetch(`${app.url}/api/analytics?project=${UNASSIGNED}`)).json();
+  const scoped = await (await fetch(`${app.url}/api/analytics?project=wf-no-such-product`)).json();
   assert.equal(scoped.empty, true);
   assert.equal((await fetch(`${app.url}/api/analytics?from=yesterday-ish`)).status, 400);
   assert.ok(all.kpis.every((k) => ['recorded', 'calculated'].includes(k.source) && k.basis));
