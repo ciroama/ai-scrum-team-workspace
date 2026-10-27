@@ -129,16 +129,22 @@ resume or cancel it.
 
 ### New products and change requests
 
-Below the request box, **For** chooses what a request is for:
+The dashboard opens with a clean workspace, ready for a new request (work
+that is still running or blocked is shown instead). Below the request box,
+**For** chooses what a request is for, and always matches what is on
+screen:
 
-- **A new product**: the team starts from scratch. The **New request**
-  button clears the workspace for this.
+- **A new product**: the team starts from scratch. Choosing it, or clicking
+  **New request**, clears the workspace.
 - **Change: *product name***: a **change request** to a product that
   already exists. The PO starts from the product's current requirements and
   writes the next version, listing what it added, changed or removed. The
   Developer changes the existing files. QA re-runs the checks for **every**
   criterion, old and new, so a change that breaks something is caught. All
   iterations of a product share one folder and one Git repository.
+  Choosing a product in **For**, or opening one of its requests from
+  **Projects**, shows its latest conversation and makes the next request a
+  change to it.
 
 Change requests need the PO and the Developer in AI-powered mode. The
 scripted PO only recognises new Hello World requests, and says so.

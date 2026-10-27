@@ -14,7 +14,10 @@ const ui = {
   mountedRoute: null,
   selectedId: null,
   pinned: false, // true when the user picked an older workflow in Projects
-  blank: false, // true after "New request": an empty workspace for a new product
+  // An empty workspace for a new product: on opening the dashboard, after
+  // "New request", and after deleting the product on screen.
+  blank: true,
+  loaded: false,
   targetProductId: null, // the product the next request changes; null = a new product
   deleting: null, // product id being deleted ('*' for all)
   requirementsProductId: null,
@@ -72,7 +75,9 @@ async function refresh() {
   refreshing = true;
   try {
     state = await api('/api/state');
-    if (ui.targetProductId && !state.products.some((p) => p.id === ui.targetProductId)) ui.targetProductId = null;
+    // Work in progress (running or blocked) is shown on opening, not hidden.
+    if (!ui.loaded && state.activeWorkflowId) ui.blank = false;
+    ui.loaded = true;
     if (ui.blank) {
       ui.selectedId = null;
       ui.pinned = false;
@@ -81,6 +86,10 @@ async function refresh() {
       ui.pinned = false;
     }
     detail = ui.selectedId ? await api(`/api/workflows/${ui.selectedId}`) : null;
+    // "For" follows what is on screen: a product with agreed requirements is
+    // the target of the next request (a change); otherwise a new product.
+    const shown = detail && state.products.find((p) => p.id === detail.workflow.productId);
+    ui.targetProductId = shown && shown.versions > 0 ? shown.id : null;
     if (ui.route === 'analytics') await loadAnalytics();
     if (ui.route === 'requirements') await loadRequirements();
     showError(null);
@@ -267,12 +276,11 @@ const actions = {
     render();
     try {
       await api(productId ? `/api/products/${productId}` : '/api/products?confirm=all', { method: 'DELETE' });
-      if (!productId || ui.targetProductId === productId) ui.targetProductId = null;
+      if (!productId || (detail && detail.workflow.productId === productId)) ui.blank = true;
       if (!productId || ui.requirementsProductId === productId) {
         ui.requirementsProductId = null;
         ui.requirements = null;
       }
-      if (!productId) ui.blank = false;
     } catch (error) {
       showError(`Could not delete: ${error.message}`);
     } finally {
