@@ -1330,6 +1330,20 @@ table.data td.num {
   margin-top: var(--s4);
 }
 
+/* In the three-column layout the top bar uses the same columns as the main
+   area and the rail, so its two cards line up with the panels below. */
+@media (min-width: 1280px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: var(--s5);
+  }
+  .topbar-actions {
+    justify-content: space-between;
+    min-width: 0;
+  }
+}
+
 @media (max-width: 1279px) {
   .app {
     grid-template-columns: 220px minmax(0, 1fr);
