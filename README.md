@@ -100,7 +100,8 @@ criterion. The dashboard labels that decision as rule-based.
 ```mermaid
 flowchart LR
     U([You]) -->|request| A[PO: requirement analysis]
-    A -->|needs clarification| U
+    A -->|question| U
+    U -->|answer| A
     A -->|requirements + acceptance criteria| I[Developer: implementation]
     I -->|files + commit| V[QA: verification]
     V -->|defects| C[Developer: correction]
@@ -113,7 +114,11 @@ flowchart LR
    requirements and acceptance criteria. Each criterion has a check that QA
    can test automatically, such as "the page shows the text *hello world*"
    or "the background colour is green". If the request is unclear or cannot
-   be built, the PO asks you instead of guessing.
+   be built, the PO asks you instead of guessing. The request then waits for
+   your answer: you reply in the same request box ("For" shows **Answer the
+   PO's question**), and the PO continues **the same request**, seeing all
+   its questions and all your answers. Only the latest request of a product
+   can be left waiting, for example if you stop before answering.
 2. **Implementation (Developer).** The product files are written to disk and
    committed to the product's own Git repository.
 3. **Verification (QA).** QA generates `test/acceptance.test.mjs` from the

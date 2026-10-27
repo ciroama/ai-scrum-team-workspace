@@ -196,6 +196,7 @@ export class Repository extends EventEmitter {
       .map(([id, workflows]) => {
         const latest = workflows.at(-1);
         const withSpec = workflows.filter((w) => w.state?.spec);
+        const current = withSpec.at(-1);
         return {
           id,
           title: withSpec.at(-1)?.state.spec.title ?? latest.title,
@@ -203,6 +204,8 @@ export class Repository extends EventEmitter {
           versions: withSpec.length,
           latestWorkflowId: latest.id,
           latestStatus: latest.status,
+          // The request that produced the current requirements, and its outcome.
+          current: current ? { workflowId: current.id, version: current.state.spec.version ?? withSpec.length, status: current.status, verified: current.verified } : null,
           recipeId: withSpec.at(-1)?.recipeId ?? null,
           createdAt: workflows[0].createdAt,
           updatedAt: latest.updatedAt,

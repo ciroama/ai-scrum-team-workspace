@@ -176,6 +176,46 @@ export class Orchestrator {
     return { workflow: this.repository.getWorkflow(workflow.id), done: this.#start(workflow.id) };
   }
 
+  /**
+   * Answers the PO's question: the same request goes back to requirement
+   * analysis, and the PO receives the whole clarification dialogue so far.
+   * @returns {{ workflow: object, done: Promise<object> }}
+   */
+  answer(workflowId, answerText) {
+    const workflow = this.repository.getWorkflow(workflowId);
+    if (!workflow) throw new NotFoundError('Workflow not found');
+    if (workflow.status !== 'needs_clarification') {
+      throw new ConflictError('The PO is not waiting for an answer on this request.');
+    }
+    if (typeof answerText !== 'string' || answerText.trim().length < 1) throw new ValidationError('Please write your answer to the PO.');
+    const text = answerText.trim();
+    if (text.length > REQUEST_LIMITS.max) throw new ValidationError(`The answer is too long (${text.length} characters). Please keep it under ${REQUEST_LIMITS.max} characters.`);
+    const active = this.repository.findActiveWorkflow();
+    if (active || this.current) {
+      throw new ConflictError(`"${(active ?? this.repository.getWorkflow(this.current.workflowId)).title}" is in progress. This workspace runs one workflow at a time.`);
+    }
+
+    const question = workflow.state.clarification?.message ?? null;
+    const dialogue = [...(workflow.state.dialogue ?? []), { question, answer: text }];
+    this.#event(workflowId, {
+      type: 'clarification.answered',
+      category: 'request',
+      actor: 'user',
+      actorKind: 'human',
+      from: 'user',
+      to: 'po',
+      summary: `Answer to the PO: "${text}"`,
+      detail: { answer: text, question, round: dialogue.length },
+    });
+    this.repository.updateWorkflow(workflowId, {
+      status: 'running',
+      stage: 'analysis',
+      finishedAt: null,
+      state: { ...workflow.state, dialogue, clarification: null },
+    });
+    return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
+  }
+
   /** Continues a blocked or interrupted workflow from its saved stage. */
   resume(workflowId) {
     const workflow = this.repository.getWorkflow(workflowId);
@@ -477,7 +517,8 @@ export class Orchestrator {
   async #analysis(ctx) {
     const { workflow, agent, say } = ctx;
     const base = workflow.state.base ?? null;
-    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base });
+    const dialogue = workflow.state.dialogue ?? [];
+    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base, dialogue });
     this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
@@ -493,13 +534,13 @@ export class Orchestrator {
         type: 'workflow.needs_clarification',
         category: 'workflow',
         status: 'warning',
-        summary: 'The workflow stopped before implementation because the PO needs a clearer or supported request. Submit a new request to continue.',
+        summary: 'The PO is waiting for your answer. Answer below to continue this same request.',
       });
       return {
         output: { summary: result.summary, status: result.status },
         update: {
           status: 'needs_clarification',
-          title: 'Request needs clarification',
+          title: base ? base.spec.title : 'Request needs clarification',
           finishedAt: now(),
           state: { ...workflow.state, clarification: { reason: result.reason, message: result.message, supported: result.supported } },
         },

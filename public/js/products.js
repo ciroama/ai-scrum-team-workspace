@@ -56,6 +56,15 @@ export function renderProjects(state, ui, actions) {
               { className: 'muted small' },
               `${product.iterations} request${product.iterations === 1 ? '' : 's'} · ${product.versions ? `requirements v${product.versions}` : 'no agreed requirements'} · last change ${dateTime(product.updatedAt)}`,
             ),
+            product.current
+              ? h(
+                  'p',
+                  { className: 'product-current' },
+                  h('span', { className: 'muted small' }, `Current version v${product.current.version}:`),
+                  h('span', { className: 'status-pill', dataset: { status: product.current.status } }, statusLabel(state, product.current.status)),
+                  verificationBadge(product.current),
+                )
+              : null,
           ),
           h(
             'div',

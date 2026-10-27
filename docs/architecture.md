@@ -81,7 +81,7 @@ summary, structured detail (evidence), status, error, and task id.
 | Category | Types |
 |---|---|
 | request | `request.submitted` |
-| analysis | `task.started`, `po.requirements`, `po.clarification` |
+| analysis | `task.started`, `po.requirements`, `po.clarification`, `clarification.answered` (your answer; the request returns to analysis) |
 | handoff | `handoff` (PO→Developer, Developer→QA, QA→Developer, QA→PO) |
 | implementation / correction | `task.started`, `dev.implementation`, `dev.correction` |
 | file | `file.written` (path, created/modified/unchanged, size, SHA-256) |
@@ -242,6 +242,7 @@ The first AI integration used GitHub Models. That service was retired on
 | GET | `/api/state` | agents (config + activity), recipes, stages, workflows, git status |
 | POST | `/api/workflows` | `{ "request": "...", "productId"?: "..." }` → 201, or 400 (invalid) / 404 (no such product) / 409 (busy) |
 | GET | `/api/workflows/:id` | workflow, tasks, timeline, product files read from disk |
+| POST | `/api/workflows/:id/answer` | `{ "answer": "..." }` answer the PO's question; the same workflow returns to analysis with the whole dialogue |
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
 | PUT | `/api/agents/:id` | `{ "enabled": true \| false, "mode": "scripted" \| "ai" }` |

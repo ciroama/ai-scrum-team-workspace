@@ -406,3 +406,39 @@ test('a running workflow cannot be deleted', async (t) => {
   assert.equal(res.status, 409);
   await done;
 });
+
+test('answering the PO continues the same request with the whole dialogue', async (t) => {
+  const question = { content: { status: 'needs_clarification', reason: 'ambiguous', message: 'Should the text be red or blue?' } };
+  const { app, claude } = await aiApp(t, [question, question, { content: PO_SPEC }, { content: page('red') }]);
+  const { workflow } = await run(app, 'change the background in green and the font color in red or blu');
+  assert.equal(workflow.status, 'needs_clarification');
+
+  await app.orchestrator.answer(workflow.id, 'red').done;
+  assert.equal(app.repository.getWorkflow(workflow.id).status, 'needs_clarification', 'the PO may ask again');
+  const done = await app.orchestrator.answer(workflow.id, 'hello world in red').done;
+  assert.equal(done.status, 'completed');
+  assert.equal(done.verified, true);
+
+  // One request, one product, one version; the PO saw every question and answer.
+  assert.equal(app.repository.listWorkflows().length, 1);
+  assert.deepEqual(done.state.dialogue.map((d) => d.answer), ['red', 'hello world in red']);
+  const received = await claude.received();
+  assert.match(received[2].stdin, /1\. PO: Should the text be red or blue\?\n {3}User: red\n2\. PO: Should the text be red or blue\?\n {3}User: hello world in red/);
+  const events = app.repository.listEvents(workflow.id);
+  assert.equal(events.filter((e) => e.type === 'clarification.answered').length, 2);
+  assert.equal(events.filter((e) => e.type === 'po.clarification').length, 2);
+  const product = app.repository.listProducts()[0];
+  assert.deepEqual([product.iterations, product.versions, product.current.status, product.current.verified], [1, 1, 'completed', true]);
+
+  // Only a request whose PO is waiting can be answered.
+  assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/answer`, json('POST', { answer: 'blue' }))).status, 409);
+});
+
+test('the scripted PO matches the answer when the user rephrases the request', async (t) => {
+  const ctx = await (await import('./helpers.js')).setup(t);
+  const asked = await ctx.orchestrator.submit('Build a futuristic Breakout game').done;
+  assert.equal(asked.status, 'needs_clarification');
+  const done = await ctx.orchestrator.answer(asked.id, 'Build a simple Hello World web application').done;
+  assert.equal(done.status, 'completed');
+  assert.equal(done.id, asked.id);
+});

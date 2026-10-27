@@ -19,6 +19,7 @@ const ui = {
   blank: true,
   loaded: false,
   targetProductId: null, // the product the next request changes; null = a new product
+  answering: null, // the request whose PO question the next message answers
   deleting: null, // product id being deleted ('*' for all)
   requirementsProductId: null,
   requirements: null,
@@ -90,6 +91,8 @@ async function refresh() {
     // the target of the next request (a change); otherwise a new product.
     const shown = detail && state.products.find((p) => p.id === detail.workflow.productId);
     ui.targetProductId = shown && shown.versions > 0 ? shown.id : null;
+    // A request whose PO is waiting for an answer: the next message answers it.
+    ui.answering = detail && detail.workflow.status === 'needs_clarification' ? detail.workflow.id : null;
     if (ui.route === 'analytics') await loadAnalytics();
     if (ui.route === 'requirements') await loadRequirements();
     showError(null);
@@ -126,11 +129,17 @@ const actions = {
     ui.feedback = null;
     render();
     try {
-      const { workflow } = await api('/api/workflows', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ request: text, productId: ui.targetProductId }),
-      });
+      const { workflow } = ui.answering
+        ? await api(`/api/workflows/${ui.answering}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answer: text }),
+          })
+        : await api('/api/workflows', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ request: text, productId: ui.targetProductId }),
+          });
       ui.blank = false;
       ui.draft = '';
       const input = document.getElementById('request-input');
@@ -139,7 +148,7 @@ const actions = {
       if (counter) counter.textContent = '0 / 2000';
       ui.selectedId = workflow.id;
       ui.pinned = false;
-      const started = { tone: 'success', text: 'Workflow started. Follow the team in the conversation above.' };
+      const started = { tone: 'success', text: ui.answering ? 'Answer sent. The PO continues this request.' : 'Workflow started. Follow the team in the conversation above.' };
       ui.feedback = started;
       setTimeout(() => {
         if (ui.feedback === started) {
@@ -262,6 +271,7 @@ const actions = {
   },
 
   setTarget(productId) {
+    if (productId === '__answer') return;
     if (productId) actions.startChange(productId);
     else actions.newProduct();
   },

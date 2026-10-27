@@ -61,7 +61,7 @@ export class AiProductOwnerAgent extends Agent {
     this.rules = scripted;
   }
 
-  async analyse({ requestText, current = null }) {
+  async analyse({ requestText, current = null, dialogue = [] }) {
     const system = [
       'You are the Product Owner (PO) of a small software team.',
       PRODUCT_SCOPE,
@@ -79,6 +79,7 @@ export class AiProductOwnerAgent extends Agent {
             '- If it can be built as such a static web page and is clear enough, answer with status "ready".',
             '- If it cannot be built that way, or an essential detail is missing or contradictory, answer with status "needs_clarification" and ask one clear question.',
           ]),
+      'If a clarification dialogue is included, the user\'s answers complete the request: use them together with the request, and do not ask again about anything already answered.',
       'Rules for "ready":',
       '- Turn EVERY concrete detail the user asked for (texts, colours, layout, behaviour) into its own acceptance criterion. Do not drop details.',
       '- Do not add requirements the user did not ask for.',
@@ -97,11 +98,15 @@ export class AiProductOwnerAgent extends Agent {
           {
             currentRequirements: { version: current.version, title: current.spec.title, requirements: current.spec.requirements, acceptanceCriteria: current.spec.acceptanceCriteria },
             changeRequest: requestText,
+            ...(dialogue.length ? { clarificationDialogue: dialogue } : {}),
           },
           null,
           2,
         )
-      : `User request:\n${requestText}`;
+      : `User request:\n${requestText}` +
+        (dialogue.length
+          ? `\n\nClarification dialogue so far (your questions and the user's answers):\n${dialogue.map((d, i) => `${i + 1}. PO: ${d.question}\n   User: ${d.answer}`).join('\n')}`
+          : '');
 
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
@@ -127,6 +132,7 @@ export class AiProductOwnerAgent extends Agent {
       requirements: value.requirements,
       acceptanceCriteria: value.acceptanceCriteria,
       version: (current?.version ?? 0) + 1,
+      ...(dialogue.length ? { clarifications: dialogue } : {}),
       ...(current ? { changes: value.changes ?? [] } : {}),
     };
     return {
@@ -155,6 +161,7 @@ function requirementsMarkdown(spec) {
     '',
     spec.changes ? `Change request: "${spec.requestText}"` : `Original request: "${spec.requestText}"`,
     '',
+    ...(spec.clarifications ? ['## Clarifications', '', ...spec.clarifications.flatMap((d) => [`- PO: ${d.question}`, `  You: ${d.answer}`]), ''] : []),
     ...(spec.changes ? ['## Changes in this version', '', ...(spec.changes.length ? spec.changes.map((c) => `- ${c}`) : ['- (none listed)']), ''] : []),
     '## Requirements',
     '',

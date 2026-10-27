@@ -205,7 +205,7 @@ export function outcomeStep(state, workflow) {
   const map = {
     completed: ['done', workflow.verified ? 'Completed · verified' : 'Completed'],
     failed: ['failed', 'Failed'],
-    needs_clarification: ['blocked', 'Needs clarification'],
+    needs_clarification: ['blocked', 'Waiting for your answer'],
     cancelled: ['skipped', 'Cancelled'],
     interrupted: ['interrupted', 'Interrupted'],
     blocked: ['blocked', 'Blocked'],
@@ -224,6 +224,8 @@ export function verificationBadge(workflow) {
     return h('span', { className: 'status-pill', dataset: { status: 'fail' } }, 'Verification failed');
   }
   if (['running'].includes(workflow.status)) return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Verification pending');
+  // Nothing was built yet: there is nothing to verify.
+  if (workflow.status === 'needs_clarification') return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Waiting for your answer');
   return h('span', { className: 'status-pill', dataset: { status: 'unverified' } }, 'Not verified');
 }
 
@@ -259,8 +261,7 @@ export function progressBanner(state, workflow, ui, actions) {
     return h(
       'div',
       { className: 'banner', dataset: { tone: 'warning' } },
-      h('div', { className: 'banner-text' }, h('strong', null, 'The PO needs clarification'), clarification ? clarification.message : ''),
-      h('div', { className: 'banner-actions' }, h('button', { type: 'button', className: 'btn btn-sm', onclick: () => actions.fillRequest(workflow.requestText) }, 'Edit request')),
+      h('div', { className: 'banner-text' }, h('strong', null, 'The PO asked you a question'), clarification ? clarification.message : '', ' Answer it in the box below to continue this request.'),
     );
   }
   if (workflow.status === 'failed') {
@@ -453,7 +454,7 @@ function outcomeCard(state, detail) {
       break;
     case 'needs_clarification':
       tone = 'warning';
-      title = 'Waiting for a clearer request';
+      title = 'Waiting for your answer to the PO';
       text = st.clarification ? st.clarification.message : 'The PO needs clarification.';
       break;
     case 'interrupted':

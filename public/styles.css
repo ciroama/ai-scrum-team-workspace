@@ -1340,7 +1340,11 @@ table.data td.num {
   }
   .topbar-actions {
     justify-content: space-between;
+    gap: var(--s2);
     min-width: 0;
+  }
+  .topbar-actions .btn {
+    white-space: nowrap;
   }
 }
 
@@ -2798,4 +2802,12 @@ p.kpi-empty {
 .version ul {
   margin: var(--s1) 0 var(--s2);
   padding-left: var(--s5);
+}
+
+.product-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s2) 0 0;
 }

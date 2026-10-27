@@ -60,7 +60,10 @@ export class ProductOwnerAgent extends ScriptedAgent {
    *         | { status: 'needs_clarification', reason: 'unsupported' | 'ambiguous', summary: string,
    *             message: string, supported: object[] }}
    */
-  analyse({ requestText, recipes, current = null }) {
+  analyse({ requestText, recipes, current = null, dialogue = [] }) {
+    // The scripted PO asks the user to rephrase, so the latest answer is the
+    // request it matches.
+    if (dialogue.length) requestText = dialogue.at(-1).answer;
     const normalized = normalizeRequest(requestText);
     const supported = catalogue(recipes);
     if (current) {

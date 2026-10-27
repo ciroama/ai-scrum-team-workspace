@@ -277,8 +277,8 @@ function conversationItems(state, detail, ui, actions) {
             state,
             event,
             [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.supported || []).map((r) => h('li', null, h('span', { className: 'num' }, '✓'), h('span', null, h('strong', null, r.title), ` — ${r.summary}`))))],
-            workflow.status === 'needs_clarification'
-              ? h('div', { style: 'margin-top:10px' }, h('button', { type: 'button', className: 'btn btn-sm', onclick: () => actions.fillRequest(workflow.requestText) }, 'Edit my request'))
+            workflow.status === 'needs_clarification' && event === last(events.filter((e) => e.type === 'po.clarification'))
+              ? h('p', { className: 'muted small', style: 'margin-top:10px' }, 'Waiting for your answer: write it in the box below.')
               : null,
           ),
         );
@@ -326,6 +326,16 @@ function conversationItems(state, detail, ui, actions) {
       case 'workflow.blocked':
         if (event === lastBlocked && workflow.status === 'blocked') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
         else items.push(note(event));
+        break;
+      case 'clarification.answered':
+        items.push(
+          h(
+            'li',
+            { className: 'msg msg-user' },
+            avatarFor('user'),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', { className: 'muted small' }, 'Answer to the PO'), h('p', null, d.answer)),
+          ),
+        );
         break;
       case 'workflow.created':
       case 'workflow.resumed':
@@ -381,6 +391,19 @@ export function renderComposer(state, ui, actions) {
   button.disabled = ui.submitting || Boolean(active);
 
   const target = state.products.find((p) => p.id === ui.targetProductId) || null;
+  if (ui.answering) {
+    mount(
+      'product-target',
+      h('option', { value: '__answer', selected: true }, "Answer the PO's question"),
+      h('option', { value: '' }, 'A new product'),
+      state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id }, `Change: ${p.title} (v${p.versions})`)),
+    );
+    input.placeholder = "Your answer to the PO's question. It continues this same request.";
+    button.firstChild.textContent = ui.submitting ? 'Sending…' : 'Send answer';
+    mount('workspace-kind', state.agents.some((a) => a.mode === 'ai') ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
+    mount('supported', 'The PO is waiting for your answer. Answering continues this request; the PO sees its questions and all your answers.');
+    return finishComposer(state, ui, active);
+  }
   mount(
     'product-target',
     h('option', { value: '', selected: !target }, 'A new product'),

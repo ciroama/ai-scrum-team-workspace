@@ -252,6 +252,14 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     ['POST', /^\/api\/preview\/refresh$/, () => preview.refresh()],
     ['POST', /^\/api\/preview\/stop$/, () => preview.stop()],
     ['POST', /^\/api\/workflows\/([\w-]+)\/resume$/, (_req, [id]) => ({ workflow: orchestrator.resume(id).workflow })],
+    [
+      'POST',
+      /^\/api\/workflows\/([\w-]+)\/answer$/,
+      async (req, [id]) => {
+        const { answer } = await readJsonBody(req);
+        return { workflow: orchestrator.answer(id, answer).workflow };
+      },
+    ],
     ['POST', /^\/api\/workflows\/([\w-]+)\/cancel$/, (_req, [id]) => ({ workflow: orchestrator.cancel(id) })],
     [
       'PUT',
