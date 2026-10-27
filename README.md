@@ -158,7 +158,7 @@ scripted PO only recognises new Hello World requests, and says so.
 
 | Page | What you find there |
 |---|---|
-| **Home** | The conversation between you and the team, built from recorded events; a stage tracker; the request box. Blocked workflows show **Resume** and **Cancel**. |
+| **Home** | The conversation between you and the team, built from recorded events; a stage tracker; the request box; and below it the latest **Team Activity** of the request on screen. Blocked workflows show **Resume** and **Cancel**. |
 | **Projects** | Every product with its requests: the first one and each change request. Open a request, see the requirements, request a change, or delete the product. |
 | **Requirements** | Every version of a product's requirements and acceptance criteria, with the changes each change request made. |
 | **Team** | The three agents, with **Enabled/Disabled** (availability) and **Brain** (scripted or AI-powered); the AI provider settings with a real connection test. |

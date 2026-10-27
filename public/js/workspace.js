@@ -1,5 +1,5 @@
 // Workspace layout: navigation, top bar, the Product Workspace conversation,
-// the right-hand rail and the shortcut cards. The conversation is built
+// the right-hand rail and the Team Activity panel. The conversation is built
 // only from recorded events; agent messages are labelled as scripted.
 
 import { duration, h, icon, last, mount, shortTime, time } from './dom.js';
@@ -174,7 +174,17 @@ export function mountHome(ui, actions) {
         h('div', { id: 'request-feedback', className: 'feedback', role: 'status', 'aria-live': 'polite' }),
       ),
     ),
-    h('div', { id: 'shortcuts', className: 'shortcuts' }),
+    h(
+      'section',
+      { className: 'panel', 'aria-labelledby': 'home-activity-heading' },
+      h(
+        'div',
+        { className: 'panel-head' },
+        h('h2', { id: 'home-activity-heading', className: 'with-icon' }, icon('activity'), 'Team Activity'),
+        h('a', { className: 'chip chip-link', href: '#/activity' }, 'View all'),
+      ),
+      h('ol', { id: 'activity-compact', className: 'activity-compact' }),
+    ),
   );
 }
 
@@ -458,55 +468,6 @@ function finishComposer(state, ui, active) {
   feedback.textContent = message ? message.text : '';
 }
 
-// ---- Shortcut cards ---------------------------------------------------------------------
-
-function chip(tone, text) {
-  return h('span', { className: 'chip', dataset: { tone } }, h('span', { className: 'dot' }), text);
-}
-
-export function renderShortcuts(state, detail, ui) {
-  const el = document.getElementById('shortcuts');
-  if (!el) return;
-  const enabled = state.agents.filter((a) => a.enabled).length;
-  const events = detail ? detail.events : [];
-  const commits = events.filter((e) => e.type === 'git.commit').length;
-  const files = detail ? detail.product.files.length : 0;
-
-  let repoChip;
-  if (!detail || files === 0) repoChip = chip('neutral', 'No product yet');
-  else if (commits) repoChip = chip('success', `${files} files · ${commits} commit${commits === 1 ? '' : 's'}`);
-  else if (!state.git.available) repoChip = chip('warning', `${files} files · Git unavailable`);
-  else repoChip = chip('neutral', `${files} files`);
-
-  const card = (href, tone, iconName, title, text, status) =>
-    h(
-      href ? 'a' : 'div',
-      { className: 'shortcut', href, 'aria-disabled': href ? null : 'true' },
-      h('span', { className: `shortcut-icon ${tone}` }, icon(iconName)),
-      h('span', { className: 'shortcut-title' }, title, href ? icon('chevron') : null),
-      h('p', null, text),
-      status,
-    );
-
-  const previewCard = () => {
-    const p = previewFor(state, detail);
-    const node = card('#/', 'tone-blue', 'preview', 'Live Preview', 'The generated product running locally on its own preview server.', chip(PREVIEW_TONE[p.status], PREVIEW_LABEL[p.status]));
-    node.addEventListener('click', (e) => {
-      e.preventDefault();
-      document.getElementById('preview-slot').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    return node;
-  };
-
-  mount(
-    el,
-    card('#/team', 'tone-violet', 'team', 'AI Scrum Team', 'Roles, availability and current work of the PO, Developer and QA.', chip(enabled === state.agents.length ? 'success' : 'warning', `${state.agents.length} agents · ${enabled} enabled`)),
-    card('#/activity', 'tone-cyan', 'activity', 'Team Activity', 'Recorded events, handoffs, commands and decisions.', chip(ui.connection === 'live' ? 'success' : 'danger', ui.connection === 'live' ? `Live · ${events.length} events` : 'Not connected')),
-    previewCard(state, detail),
-    card('#/repository', 'tone-orange', 'repository', 'Repository', 'Generated files, test results and Git commits of the product.', repoChip),
-  );
-}
-
 // ---- Rail ---------------------------------------------------------------------------
 
 export function renderRail(state, detail, ui, actions) {
@@ -514,7 +475,6 @@ export function renderRail(state, detail, ui, actions) {
   document.getElementById('team-note').textContent = state.agents.some((a) => a.mode === 'ai')
     ? `${teamModeText(state)}. Model: ${state.ai.model}.`
     : 'Scripted agents: fixed rules and templates, no AI model.';
-  mount('rail-activity-icon', icon('activity'));
   const enabled = state.agents.filter((a) => a.enabled).length;
   const summary = document.getElementById('team-summary');
   summary.dataset.tone = enabled === state.agents.length ? 'success' : 'warning';
@@ -561,8 +521,16 @@ export function renderRail(state, detail, ui, actions) {
     ),
   );
 
+  renderPreview(state, detail, ui, actions);
+}
+
+// ---- Team Activity (Home) ------------------------------------------------------------
+
+/** The latest recorded events of the workflow on screen. */
+export function renderActivity(state, detail) {
+  if (!document.getElementById('activity-compact')) return;
   const events = (detail ? detail.events : state.workspaceEvents).filter((e) => e.type !== 'command.started');
-  const recent = events.slice(-6);
+  const recent = events.slice(-8);
   mount(
     'activity-compact',
     recent.length
@@ -578,7 +546,6 @@ export function renderRail(state, detail, ui, actions) {
       : h('li', { className: 'empty' }, 'No activity yet.'),
   );
 
-  renderPreview(state, detail, ui, actions);
 }
 
 // ---- Live Preview ---------------------------------------------------------------------

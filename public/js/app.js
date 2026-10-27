@@ -434,7 +434,7 @@ function render() {
       ws.renderTracker(state, detail);
       ws.renderConversation(state, detail, ui, actions);
       ws.renderComposer(state, ui, actions);
-      ws.renderShortcuts(state, detail, ui);
+      ws.renderActivity(state, detail);
       break;
     case 'team':
       renderTeam(state, ui, actions);
