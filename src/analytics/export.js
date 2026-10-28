@@ -75,6 +75,7 @@ export function requestsCsv(source, filter) {
       aiCalls,
       blocks,
       corrections: eventsOf(w.id, 'handoff').filter((e) => e.from === 'qa' && e.to === 'dev').length,
+      poRework: eventsOf(w.id, 'handoff').filter((e) => e.from === 'po' && e.to === 'dev' && e.status === 'failure').length,
     };
   });
   return toCsv(rows, [
@@ -93,7 +94,8 @@ export function requestsCsv(source, filter) {
     ['requirements', (r) => r.spec?.requirements.length ?? null],
     ['acceptance criteria', (r) => r.spec?.acceptanceCriteria.length ?? null],
     ['implementation attempts', (r) => r.w.state?.attempt ?? 0],
-    ['correction cycles', (r) => r.corrections],
+    ['corrections from QA', (r) => r.corrections],
+    ['rework from the PO', (r) => r.poRework],
     ['test runs', (r) => r.testRuns.length],
     ['tests in last run', (r) => r.lastRun?.tests ?? null],
     ['tests passed in last run', (r) => r.lastRun?.pass ?? null],

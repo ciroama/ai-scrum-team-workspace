@@ -109,16 +109,21 @@ criterion.
 ## How a request flows
 
 ```mermaid
-flowchart LR
-    U([You]) -->|request| A[PO: requirement analysis]
-    A -->|question| U
-    U -->|answer| A
-    A -->|requirements + acceptance criteria| I[Developer: implementation]
-    I -->|files + commit| V[QA: verification]
-    V -->|defects| C[Developer: correction]
+flowchart TD
+    U([You: a request,<br/>or a change to a product]) --> A
+    A{"PO: requirement analysis<br/>Is the request clear and buildable?"}
+    A -- "no: asks a question" --> Q([You answer<br/>in the same request])
+    Q --> A
+    A -- "yes: requirements +<br/>acceptance criteria" --> I["Developer: implementation<br/>files written + Git commit"]
+    I --> V{"QA: verification<br/>Do all checks pass?"}
+    V -- "no, attempts left" --> C["Developer: correction<br/>of QA's defects"]
     C --> V
-    V -->|all criteria pass| R[PO: final review]
-    R --> D([Completed and verified])
+    V -- "yes" --> R{"PO: final review<br/>Does it do what was asked?"}
+    V -- "no, no attempts left" --> R
+    R -- "accept<br/>(only if QA verified everything)" --> D([Completed and verified])
+    R -- "reject, verified product,<br/>attempts left" --> W["Developer: rework<br/>with the PO's reasons"]
+    W --> V
+    R -- "reject, no attempts left" --> F([Failed: open problems stay visible])
 ```
 
 1. **Requirement analysis (PO).** The PO writes `REQUIREMENTS.md` with
@@ -134,15 +139,38 @@ flowchart LR
    committed to the product's own Git repository.
 3. **Verification (QA).** QA generates `test/acceptance.test.mjs` from the
    criteria, runs every test, and reports a verdict with evidence.
-4. **Correction (Developer).** If tests fail, QA sends the defects back. The
-   Developer gets up to three attempts in total; then the workflow ends as
-   failed and the open defects stay visible.
-5. **Final review (PO).** The PO accepts or rejects the product. It can
-   never accept one that QA did not verify; an AI-powered PO can also reject
-   a product whose tests pass, and says why.
+4. **Correction (Developer).** If tests fail, QA sends the defects back to
+   the Developer, and QA verifies the correction again.
+5. **Final review (PO).** The PO accepts or rejects the product:
+   - It **can never accept** a product that QA did not verify.
+   - An AI-powered PO **can reject** a verified product when, reading the
+     files, it does not really do what you asked. The product then goes
+     back to the Developer with the PO's reasons, QA verifies the rework,
+     and the PO reviews it again, remembering its earlier reasons.
+6. **Limit.** The Developer has **three implementation attempts** in
+   total: the first build plus any corrections (from QA) and reworks (from
+   the PO). When they are used up, the workflow ends as **Failed**, and the
+   open defects or the PO's reasons stay visible.
 
 One workflow runs at a time. A blocked workflow keeps that slot until you
 resume or cancel it.
+
+### Who decides what
+
+| Decision | Scripted mode | AI-powered mode | Safeguard |
+|---|---|---|---|
+| Is the request clear and buildable? | PO matches it against fixed recipes | PO (Claude) | The question goes to you; nothing is guessed |
+| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude) | Every criterion must use a check type QA can test automatically |
+| The product files | Developer fills a template | Developer (Claude) | Files are checked before writing: inside the product folder, allowed types, not in `test/`, nothing loaded from the internet |
+| Do the checks pass? | **QA, always scripted** | **QA, always scripted** | Real `node --test` runs; the model never grades its own work |
+| Accept or reject | PO by rule: accept only if QA verified everything | PO (Claude), with its reasons | Claude may reject a verified product, but an "accept" without QA verification is refused |
+
+Every AI answer must match the agent's **contract** (a fixed JSON shape
+with validated content). An answer that does not match is sent back once
+with the problems listed; a second bad answer **blocks** the workflow with
+the reason instead of being used. The workflow also blocks (never fails
+silently) when an agent is disabled or Claude Code is unavailable. Fix the
+cause and click **Resume** to continue from the same stage.
 
 ### New products and change requests
 

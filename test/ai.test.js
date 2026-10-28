@@ -173,7 +173,8 @@ test('a wrong colour from the AI Developer is caught by QA and corrected', async
   // The correction request carried QA's defects and the current files.
   const received = await claude.received();
   const correction = JSON.parse(received[2].stdin.split('\n').slice(1).join('\n'));
-  assert.equal(correction.defectsReportedByQA.length, 1);
+  assert.equal(correction.problemsReported.length, 1);
+  assert.equal(correction.problemsReported[0].reportedBy, 'QA');
   assert.ok(correction.currentFiles.some((f) => f.path === 'style.css' && f.content.includes('blue')));
 });
 
@@ -455,14 +456,36 @@ test('the scripted PO matches the answer when the user rephrases the request', a
   assert.equal(done.id, asked.id);
 });
 
-test('the AI PO may reject a product whose tests pass, but never accept one QA did not verify', async (t) => {
-  const reject = { content: { decision: 'reject', summary: 'Not accepted: the text is centred with a hard-coded margin that breaks on small screens.', reasons: ['Layout not responsive'] } };
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject]);
+test('a verified product the AI PO rejects goes back to the Developer with the PO\'s reasons', async (t) => {
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: the phrase is not in the centre of the page.', reasons: ['Centre the phrase on the page'] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
-  assert.equal(workflow.status, 'failed');
-  assert.equal(workflow.verified, false, 'not accepted, so not delivered as verified');
+  assert.equal(workflow.status, 'completed');
+  assert.equal(workflow.verified, true);
+  assert.equal(workflow.state.attempt, 2, 'one rework after the first implementation');
+
+  // The rejection was handed to the Developer, who received the PO's reasons.
+  const rework = events.find((e) => e.type === 'handoff' && e.from === 'po' && e.to === 'dev' && e.status === 'failure');
+  assert.match(rework.summary, /Not accepted yet: .*not in the centre.*attempt 2 of 3/);
+  const received = await claude.received();
+  const devInput = JSON.parse(received[3].stdin.split('\n').slice(1).join('\n'));
+  assert.deepEqual(devInput.problemsReported.map((p) => [p.reportedBy, p.title]), [['PO', 'Centre the phrase on the page']]);
+  // QA verified the rework again, and the PO re-reviewed it knowing its earlier reasons.
+  assert.equal(events.filter((e) => e.type === 'test.results').length, 2);
+  assert.deepEqual(JSON.parse(received[4].stdin).yourPreviousRejections[0].reasons, ['Centre the phrase on the page']);
+
+  const analytics = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.match(analytics.kpis.find((k) => k.key === 'corrections').detail, /0 from QA · 1 from the PO/);
+});
+
+test('the AI PO cannot accept what QA did not verify, and a rejection with no attempts left fails', async (t) => {
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: still not centred.', reasons: ['Centre it'] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject, { content: page('red') }, reject, { content: page('red') }, reject]);
+  const { workflow } = await run(app);
+  assert.equal(workflow.status, 'failed', 'three implementations, then the limit');
+  assert.equal(workflow.state.attempt, 3);
+  assert.equal(workflow.verified, false);
   assert.equal(workflow.state.verification.verdict, 'pass', 'QA still records that its tests passed');
-  assert.match(events.find((e) => e.type === 'po.review').summary, /hard-coded margin/);
 
   // With failing tests an "accept" breaks the contract: the PO is asked again and must reject.
   const accept = { content: { decision: 'accept', summary: 'Looks fine to me.' } };

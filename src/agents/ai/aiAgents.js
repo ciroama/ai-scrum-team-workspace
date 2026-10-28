@@ -154,7 +154,7 @@ export class AiProductOwnerAgent extends Agent {
    * requirements, QA's evidence and the product files. Guard: it may reject
    * a product whose tests pass, but cannot accept one QA did not verify.
    */
-  async review({ spec, verification, files = [] }) {
+  async review({ spec, verification, files = [], previousRejections = [] }) {
     const evidence = this.rules.review({ spec, verification });
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
@@ -162,7 +162,8 @@ export class AiProductOwnerAgent extends Agent {
       'You receive the user\'s request, the agreed requirements and acceptance criteria, the result of QA\'s automated verification, and the product files.',
       'Decide whether to accept the product:',
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
-      '- Reject if QA did not verify every criterion, or if, reading the files, the product does not really do what the user asked (even when the tests pass). Explain why.',
+      '- Reject if QA did not verify every criterion, or if, reading the files, the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons the Developer can act on: a rejected product goes back to the Developer for rework.',
+      '- If you rejected earlier versions, check whether your reasons were addressed. Do not invent new demands beyond the request and the requirements.',
       qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
       'Answer with a JSON object only: {"decision":"accept" | "reject","summary":"one or two sentences for the user","reasons":["..."]}',
     ].join('\n');
@@ -175,6 +176,7 @@ export class AiProductOwnerAgent extends Agent {
           ? { executed: verification.executed, verdict: verification.verdict, criteria: verification.criteria, tests: verification.testSummary, openDefects: verification.defects?.map((d) => d.title) ?? [] }
           : { executed: false },
         files: files.map((f) => ({ path: f.path, content: f.content })),
+        ...(previousRejections.length ? { yourPreviousRejections: previousRejections } : {}),
       },
       null,
       2,
@@ -218,8 +220,8 @@ export class AiDeveloperAgent extends Agent {
         id: 'dev',
         label: 'Developer',
         title: 'Developer',
-        summary: 'Writes the product files with an AI model and fixes defects reported by QA.',
-        responsibilities: ['Implements the requirements', 'Creates and modifies project files', 'Fixes defects reported by QA', 'Hands the implementation to QA'],
+        summary: 'Writes the product files with an AI model and fixes the problems reported by QA or the PO.',
+        responsibilities: ['Implements the requirements', 'Creates and modifies project files', 'Fixes defects reported by QA and rework asked by the PO', 'Hands the implementation to QA'],
       },
       AgentKind.AI,
     );
@@ -251,7 +253,12 @@ export class AiDeveloperAgent extends Agent {
         acceptanceCriteria: spec.acceptanceCriteria,
         attempt,
         ...(change && !correcting ? { changesToRequirements: spec.changes ?? [], currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })) } : {}),
-        ...(correcting ? { defectsReportedByQA: defects, currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })) } : {}),
+        ...(correcting
+          ? {
+              problemsReported: defects.map((d) => ({ reportedBy: d.reportedBy ?? 'QA', ...d })),
+              currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })),
+            }
+          : {}),
       },
       null,
       2,
@@ -260,12 +267,12 @@ export class AiDeveloperAgent extends Agent {
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
       user: correcting
-        ? `Fix the defects reported by QA. Return the complete corrected files.\n${user}`
+        ? `Fix the problems reported by QA (failed checks) or by the PO (the product does not do what was asked). Return the complete corrected files.\n${user}`
         : change
           ? `Change the existing product to meet the updated requirements:\n${user}`
           : `Implement this:\n${user}`,
       validate: validateDevReply,
-      purpose: correcting ? 'fix the reported defects' : change ? 'implement the change request' : 'implement the requirements',
+      purpose: correcting ? (defects.some((d) => d.reportedBy === 'PO') ? "rework what the PO rejected" : 'fix the reported defects') : change ? 'implement the change request' : 'implement the requirements',
     });
     return {
       files: value.files,

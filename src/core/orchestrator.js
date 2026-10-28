@@ -579,7 +579,8 @@ export class Orchestrator {
     const state = workflow.state;
     const attempt = (state.attempt ?? 0) + 1;
     const correcting = stage.id === 'correction';
-    const defects = correcting ? (state.verification?.defects ?? []) : [];
+    // Rework after the PO rejected a verified product, or a correction of QA's defects.
+    const defects = correcting ? (state.poFeedback ?? state.verification?.defects ?? []) : [];
 
     const changing = Boolean(state.base);
     const currentFiles =
@@ -683,7 +684,7 @@ export class Orchestrator {
     }
     return {
       output: { summary: evaluation.summary, verdict: evaluation.verdict },
-      update: { stage: next, verified: false, state: { ...state, verification } },
+      update: { stage: next, verified: false, state: { ...state, verification, poFeedback: null } },
     };
   }
 
@@ -691,15 +692,42 @@ export class Orchestrator {
     const { workflow, agent, say } = ctx;
     const state = workflow.state;
     const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/'));
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files });
+    const rejections = state.poRejections ?? [];
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files, previousRejections: rejections });
     this.#recordAiCalls(ctx, review.aiCalls);
     const { aiCalls: _calls, ...decision } = review;
+    const qaPassed = state.verification?.verdict === 'pass';
+    // A PO rejecting a product QA verified sends it back to the Developer,
+    // like QA's defects, while implementation attempts remain.
+    const rework = !review.accepted && qaPassed && state.attempt < MAX_IMPLEMENTATION_ATTEMPTS;
     say({
       type: 'po.review',
-      status: review.accepted ? 'success' : 'failure',
+      status: review.accepted ? 'success' : rework ? 'warning' : 'failure',
       summary: review.summary,
-      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null, reasons: review.reasons ?? [] },
+      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null, reasons: review.reasons ?? [], rework },
     });
+
+    if (rework) {
+      const reasons = review.reasons?.length ? review.reasons : [review.summary];
+      const poFeedback = reasons.map((reason) => ({ title: reason, reportedBy: 'PO', detail: review.summary }));
+      say({
+        type: 'handoff',
+        category: 'handoff',
+        from: agent.id,
+        to: 'dev',
+        status: 'failure',
+        summary: `Not accepted yet: ${review.summary} Please rework the product (attempt ${state.attempt + 1} of ${MAX_IMPLEMENTATION_ATTEMPTS}); QA will verify it again.`,
+        detail: { defects: reasons },
+      });
+      return {
+        output: { summary: review.summary, accepted: false, rework: true },
+        update: {
+          stage: 'correction',
+          verified: false,
+          state: { ...state, review: decision, poFeedback, poRejections: [...rejections, { attempt: state.attempt, summary: review.summary, reasons }] },
+        },
+      };
+    }
 
     if (review.accepted) {
       this.#event(workflow.id, {

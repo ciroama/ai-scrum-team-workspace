@@ -53,10 +53,23 @@ and records events, so the event log shows what actually happened.
 
 ```
 analysis (PO) ──► implementation (Dev) ──► verification (QA) ──► review (PO) ──► completed / failed
-     │                                        │   ▲
-     └─► needs_clarification                  ▼   │  defects (max 3 implementation attempts)
-                                            correction (Dev)
+  │    ▲                                      │   ▲                 │
+  ▼    │ answer (same workflow)               ▼   │                 │ AI PO rejects a verified
+needs_clarification                        correction (Dev) ◄───────┘ product: rework
+                                     (QA defects or PO reasons; max 3 implementation attempts)
 ```
+
+- **Clarification:** `needs_clarification` waits for an answer
+  (`POST /api/workflows/:id/answer`); the same workflow returns to analysis
+  with `state.dialogue` (every question and answer).
+- **Review:** the scripted PO accepts by the evidence rule. The AI PO decides
+  from the request, requirements, QA's verification and the product files;
+  `validateReviewReply` refuses "accept" unless QA verified every criterion.
+  When the AI PO rejects a verified product and attempts remain, the
+  orchestrator hands its reasons to the Developer (`state.poFeedback`, a
+  `handoff` PO → Developer with status `failure`), runs `correction`, then
+  verification and review again; the PO receives `state.poRejections`.
+  Without attempts left the workflow fails.
 
 - Before every stage the orchestrator checks that the responsible agent is
   enabled. If not, the workflow becomes **blocked** at that stage. The reason

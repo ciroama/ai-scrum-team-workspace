@@ -105,8 +105,11 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   for (const run of testRuns) lastRunByWorkflow.set(run.workflowId, run);
   const finalRuns = [...lastRunByWorkflow.values()];
 
-  // Correction cycles: QA -> Developer feedback handoffs.
-  const feedback = events.filter((e) => e.type === 'handoff' && e.from === 'qa' && e.to === 'dev');
+  // Correction cycles: work sent back to the Developer, by QA (defects) or by
+  // the PO (rejected although verified).
+  // (The PO's requirements handoff to the Developer is not a send-back.)
+  const feedback = events.filter((e) => e.type === 'handoff' && e.to === 'dev' && e.status === 'failure' && (e.from === 'qa' || e.from === 'po'));
+  const poRework = feedback.filter((e) => e.from === 'po');
 
   // Blocks caused by disabled agents (older events carry no cause; they were
   // all disabled-agent blocks), and how long any block lasted.
@@ -215,9 +218,9 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       label: 'Correction cycles',
       unit: 'count',
       value: testRuns.length ? feedback.length : null,
-      detail: testRuns.length ? `in ${new Set(feedback.map((e) => e.workflowId)).size} workflow(s)` : null,
+      detail: testRuns.length ? `in ${new Set(feedback.map((e) => e.workflowId)).size} workflow(s) · ${feedback.length - poRework.length} from QA · ${poRework.length} from the PO` : null,
       source: SOURCE.recorded,
-      basis: 'Recorded QA → Developer feedback handoffs (each one sends the work back for correction). Shown once QA has verified at least once.',
+      basis: 'Recorded handoffs that send the work back to the Developer: QA → Developer (failed checks) and PO → Developer (the PO rejected a verified product). Shown once QA has verified at least once.',
     },
     {
       key: 'blocks',
