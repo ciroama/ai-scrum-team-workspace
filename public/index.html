@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>AI Scrum Team Workspace</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <a class="brand" href="#/">
+          <img class="brand-mark" src="/favicon.svg" alt="" width="40" height="40" />
+          <span>
+            <span class="brand-name">AI Scrum Team</span>
+            <span class="brand-tagline">From requests to verified products</span>
+          </span>
+        </a>
+        <nav id="nav" class="nav" aria-label="Main"></nav>
+        <div id="sidebar-status" class="sidebar-status"></div>
+      </aside>
+
+      <header class="topbar">
+        <div id="project-card" class="project-card"></div>
+        <div class="topbar-actions">
+          <span id="elapsed" class="chip chip-timer" title="Elapsed time of the shown workflow" hidden></span>
+          <button id="new-request" class="btn btn-ghost" type="button">New request</button>
+          <div class="user-card" title="You submit requirements and make product decisions">
+            <span class="avatar avatar-user" id="user-avatar"></span>
+            <span>
+              <span class="user-name">You</span>
+              <span class="user-role">Product requester</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div id="global-error" class="global-error" role="alert" hidden></div>
+
+      <main id="view" class="main" tabindex="-1"></main>
+
+      <aside class="rail" aria-label="Team overview">
+        <section class="panel" aria-labelledby="rail-team-heading">
+          <div class="panel-head">
+            <h2 id="rail-team-heading" class="with-icon"><span id="rail-team-icon"></span>AI Scrum Team</h2>
+            <span id="team-summary" class="chip"></span>
+          </div>
+          <p id="team-note" class="panel-note"></p>
+          <ul id="team-rows" class="team-rows"></ul>
+        </section>
+
+        <section id="preview-slot" class="panel panel-preview" aria-labelledby="preview-heading"></section>
+      </aside>
+    </div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>
