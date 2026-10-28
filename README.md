@@ -25,6 +25,7 @@ corrections, Git commits and every AI request.
 - [How it is built](#how-it-is-built)
 - [Tests](#tests)
 - [Limitations](#limitations)
+- [How it was made](#how-it-was-made)
 - [History](#history)
 - [Disclaimer](#disclaimer)
 - [License](#license)
@@ -386,6 +387,21 @@ integration was checked by hand.
 - The AI's output depends on the model. Answers that break the contract
   block the workflow instead of being used.
 - No user accounts, and not meant for a shared network.
+
+## How it was made
+
+This project was built with [Claude](https://claude.ai) as my development
+partner. Claude wrote the code, the tests and most of the documentation;
+that is why most commits in the history list Claude as the author.
+
+My role was the one I know best: Product Owner. I defined the vision and the
+ground rules, wrote the requirements for each milestone, decided what to
+build next and what to leave out, reviewed every result, and tested the
+dashboard by hand, including the real Claude Code integration.
+
+In other words, the project is a small experiment in the same idea it
+studies: a human making the product decisions while AI does much of the
+building.
 
 ## History
 
