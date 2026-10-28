@@ -432,8 +432,10 @@ function render() {
   switch (ui.route) {
     case 'home':
       ws.renderTracker(state, detail);
-      ws.renderConversation(state, detail, ui, actions);
+      // The composer first: its height changes the conversation's, which
+      // then scrolls to its latest message.
       ws.renderComposer(state, ui, actions);
+      ws.renderConversation(state, detail, ui, actions);
       ws.renderActivity(state, detail);
       break;
     case 'team':

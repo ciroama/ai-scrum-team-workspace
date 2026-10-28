@@ -379,6 +379,7 @@ export function renderConversation(state, detail, ui, actions) {
   const list = document.getElementById('conversation');
   const nearBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 40;
   if (!detail) {
+    list.dataset.workflow = '';
     mount(
       list,
       h('li', { className: 'empty' }, 'No conversation yet. Write your requirement below, for example "Build a simple Hello World web application.", and click Start workflow.'),
@@ -386,10 +387,19 @@ export function renderConversation(state, detail, ui, actions) {
     );
     return;
   }
-  const items = conversationItems(state, detail, ui, actions);
-  const before = list.childElementCount;
-  mount(list, items);
-  if (nearBottom || items.length > before) list.scrollTop = list.scrollHeight;
+  // Follow the conversation: jump to the latest message when another request
+  // is shown or something new was recorded, so the team's progress (e.g. "PO
+  // started: analyse the requirement") is visible without scrolling.
+  const changed = list.dataset.workflow !== detail.workflow.id;
+  const grew = detail.events.length > Number(list.dataset.events || 0);
+  mount(list, conversationItems(state, detail, ui, actions));
+  if (changed || grew || nearBottom) {
+    list.scrollTop = list.scrollHeight;
+    // Again after layout settles (feedback messages can resize the panel).
+    requestAnimationFrame(() => (list.scrollTop = list.scrollHeight));
+  }
+  list.dataset.workflow = detail.workflow.id;
+  list.dataset.events = String(detail.events.length);
 }
 
 export function renderComposer(state, ui, actions) {
