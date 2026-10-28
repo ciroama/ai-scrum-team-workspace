@@ -687,16 +687,18 @@ export class Orchestrator {
     };
   }
 
-  async #review({ workflow, agent, say }) {
+  async #review(ctx) {
+    const { workflow, agent, say } = ctx;
     const state = workflow.state;
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null });
+    const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/'));
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files });
+    this.#recordAiCalls(ctx, review.aiCalls);
+    const { aiCalls: _calls, ...decision } = review;
     say({
       type: 'po.review',
       status: review.accepted ? 'success' : 'failure',
       summary: review.summary,
-      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null },
-      // The acceptance decision is the evidence rule, never a model's opinion.
-      ...(review.decidedBy === 'rule' ? { actorKind: 'scripted' } : {}),
+      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null, reasons: review.reasons ?? [] },
     });
 
     if (review.accepted) {
@@ -720,7 +722,7 @@ export class Orchestrator {
         status: review.accepted ? 'completed' : 'failed',
         verified: review.accepted && state.verification?.verdict === 'pass',
         finishedAt: now(),
-        state: { ...state, review },
+        state: { ...state, review: decision },
       },
     };
   }

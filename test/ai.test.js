@@ -90,6 +90,9 @@ const page = (color) => ({
   handoffMessage: 'Ready for QA.',
 });
 
+// The PO's final review (an AI decision since the PO is AI-powered).
+const ACCEPT = { content: { decision: 'accept', summary: 'Accepted: the page does what was asked and QA verified every criterion.', reasons: ['All criteria verified.'] } };
+
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 async function aiApp(t, replies, { devMode = 'ai' } = {}) {
@@ -108,16 +111,17 @@ async function run(app, request = REQUEST) {
 }
 
 test('AI PO and AI Developer build exactly what was asked; scripted QA verifies it independently', async (t) => {
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }]);
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
 
   assert.equal(workflow.status, 'completed');
   assert.equal(workflow.verified, true);
   assert.equal(workflow.title, 'Green hello world page');
 
-  // Claude Code really ran twice, with the user's words, the default model and no tools.
+  // Claude Code really ran three times (analysis, implementation, review),
+  // with the user's words, the default model and no tools.
   const received = await claude.received();
-  assert.equal(received.length, 2);
+  assert.equal(received.length, 3);
   assert.match(received[0].stdin, /background green and font red/);
   assert.equal(option(received[0].args, '--model'), 'sonnet');
   assert.equal(option(received[0].args, '--output-format'), 'json');
@@ -128,15 +132,23 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
   const spec = workflow.state.spec;
   assert.deepEqual(spec.acceptanceCriteria.map((c) => c.check.type), ['textVisible', 'cssProperty', 'cssProperty', 'centeredLayout', 'fileExists']);
 
-  // Labels: AI where a model decided, scripted for QA and the acceptance rule.
+  // Labels: AI where a model decided, scripted for QA.
   const byType = (type) => events.filter((e) => e.type === type);
-  assert.equal(byType('ai.call').length, 2);
+  assert.equal(byType('ai.call').length, 3);
   assert.ok(byType('ai.call').every((e) => e.actorKind === 'ai' && e.status === 'success'));
   assert.match(byType('ai.call')[0].summary, /asked claude-sonnet-test via Claude Code to analyse the request in 1\.5 s, 120 → 340 tokens/);
   assert.equal(byType('po.requirements')[0].actorKind, 'ai');
   assert.equal(byType('dev.implementation')[0].actorKind, 'ai');
   assert.equal(byType('qa.verdict')[0].actorKind, 'scripted');
-  assert.equal(byType('po.review')[0].actorKind, 'scripted', 'acceptance is rule-based');
+  const review = byType('po.review')[0];
+  assert.equal(review.actorKind, 'ai', 'the AI-powered PO decides the acceptance');
+  assert.equal(review.detail.decidedBy, 'ai');
+  assert.deepEqual(review.detail.reasons, ['All criteria verified.']);
+  // The review saw QA's evidence and the product files.
+  const reviewInput = JSON.parse(received[2].stdin);
+  assert.equal(reviewInput.qaVerification.verdict, 'pass');
+  assert.ok(reviewInput.files.some((f) => f.path === 'style.css'));
+  assert.ok(!reviewInput.files.some((f) => f.path.startsWith('test/')));
 
   // QA's tests really ran against the generated files.
   const results = byType('test.results')[0].detail;
@@ -150,7 +162,7 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
 });
 
 test('a wrong colour from the AI Developer is caught by QA and corrected', async (t) => {
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, { content: page('red') }]);
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
 
   assert.equal(workflow.status, 'completed');
@@ -178,7 +190,7 @@ test('when the Claude usage limit is reached the workflow blocks with the reason
   assert.equal(events.find((e) => e.type === 'ai.call').status, 'failure');
   assert.ok(!events.some((e) => e.type === 'po.requirements'), 'no analysis is claimed');
 
-  await claude.push({ content: PO_SPEC }, { content: page('red') });
+  await claude.push({ content: PO_SPEC }, { content: page('red') }, ACCEPT);
   const resumed = await app.orchestrator.resume(workflow.id).done;
   assert.equal(resumed.status, 'completed');
 
@@ -186,8 +198,8 @@ test('when the Claude usage limit is reached the workflow blocks with the reason
   const kpi = (key) => analytics.kpis.find((k) => k.key === key);
   assert.equal(kpi('blocks').value, 0, 'not counted as a disabled-agent block');
   assert.equal(kpi('otherBlocks').value, 1);
-  assert.equal(kpi('aiCalls').value, 3);
-  assert.match(kpi('aiCalls').detail, /^2 succeeded/);
+  assert.equal(kpi('aiCalls').value, 4);
+  assert.match(kpi('aiCalls').detail, /^3 succeeded/);
 });
 
 test('an unusable model answer is retried once, then reported instead of guessed', async (t) => {
@@ -212,7 +224,7 @@ test('the AI PO asks for clarification when a request cannot be built as a stati
 });
 
 test('an AI PO with a scripted Developer blocks with a clear way forward', async (t) => {
-  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }], { devMode: 'scripted' });
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT], { devMode: 'scripted' });
   const { workflow } = await run(app);
   assert.equal(workflow.status, 'blocked');
   assert.equal(workflow.stage, 'implementation');
@@ -317,7 +329,7 @@ test('a change request builds on the current requirements and files of the same 
     requirements: ['The page background is green.', 'The text is blue.', 'The phrase "hello world" is shown in the centre of the page.'],
     acceptanceCriteria: PO_SPEC.acceptanceCriteria.map((c) => (c.check.property === 'color' ? { description: 'The text is blue.', check: { type: 'cssProperty', property: 'color', value: 'blue' } } : c)),
   };
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, { content: changed }, { content: { ...page('blue'), summary: 'Changed the colour.' } }]);
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT, { content: changed }, { content: { ...page('blue'), summary: 'Changed the colour.' } }, ACCEPT]);
   const { workflow: first } = await run(app);
   assert.equal(first.status, 'completed');
 
@@ -331,12 +343,12 @@ test('a change request builds on the current requirements and files of the same 
 
   // The PO received the current requirements, the Developer the current files.
   const received = await claude.received();
-  const poInput = JSON.parse(received[2].stdin);
+  const poInput = JSON.parse(received[3].stdin);
   assert.equal(poInput.changeRequest, 'make the text blue');
   assert.equal(poInput.currentRequirements.version, 1);
   assert.ok(poInput.currentRequirements.requirements.includes('The text is red.'));
-  assert.match(option(received[2].args, '--system-prompt'), /The product already exists/);
-  const devInput = JSON.parse(received[3].stdin.split('\n').slice(1).join('\n'));
+  assert.match(option(received[3].args, '--system-prompt'), /The product already exists/);
+  const devInput = JSON.parse(received[4].stdin.split('\n').slice(1).join('\n'));
   assert.ok(devInput.currentFiles.some((f) => f.path === 'index.html' && f.content.includes('hello world')));
 
   // Same folder and Git repository, with the history of both iterations;
@@ -360,7 +372,7 @@ test('a change request builds on the current requirements and files of the same 
 });
 
 test('the scripted PO refuses change requests honestly; unknown products are rejected', async (t) => {
-  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }]);
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT]);
   const { workflow } = await run(app);
   await fetch(`${app.url}/api/agents/po`, json('PUT', { mode: 'scripted' }));
   const { workflow: cr, done } = app.orchestrator.submit('make the text blue', { productId: workflow.productId });
@@ -374,7 +386,7 @@ test('the scripted PO refuses change requests honestly; unknown products are rej
 });
 
 test('deleting a product removes its requests, events, statistics and files for good', async (t) => {
-  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, { content: PO_SPEC }, { content: page('red') }]);
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT, { content: PO_SPEC }, { content: page('red') }, ACCEPT]);
   const { workflow: keep } = await run(app);
   const { workflow: doomed } = await run(app);
   const dir = app.orchestrator.productDir(doomed.id);
@@ -409,7 +421,7 @@ test('a running workflow cannot be deleted', async (t) => {
 
 test('answering the PO continues the same request with the whole dialogue', async (t) => {
   const question = { content: { status: 'needs_clarification', reason: 'ambiguous', message: 'Should the text be red or blue?' } };
-  const { app, claude } = await aiApp(t, [question, question, { content: PO_SPEC }, { content: page('red') }]);
+  const { app, claude } = await aiApp(t, [question, question, { content: PO_SPEC }, { content: page('red') }, ACCEPT]);
   const { workflow } = await run(app, 'change the background in green and the font color in red or blu');
   assert.equal(workflow.status, 'needs_clarification');
 
@@ -441,4 +453,24 @@ test('the scripted PO matches the answer when the user rephrases the request', a
   const done = await ctx.orchestrator.answer(asked.id, 'Build a simple Hello World web application').done;
   assert.equal(done.status, 'completed');
   assert.equal(done.id, asked.id);
+});
+
+test('the AI PO may reject a product whose tests pass, but never accept one QA did not verify', async (t) => {
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: the text is centred with a hard-coded margin that breaks on small screens.', reasons: ['Layout not responsive'] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject]);
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'failed');
+  assert.equal(workflow.verified, false, 'not accepted, so not delivered as verified');
+  assert.equal(workflow.state.verification.verdict, 'pass', 'QA still records that its tests passed');
+  assert.match(events.find((e) => e.type === 'po.review').summary, /hard-coded margin/);
+
+  // With failing tests an "accept" breaks the contract: the PO is asked again and must reject.
+  const accept = { content: { decision: 'accept', summary: 'Looks fine to me.' } };
+  const blue = page('blue');
+  await claude.push({ content: PO_SPEC }, { content: blue }, { content: blue }, { content: blue }, accept, { content: { decision: 'reject', summary: 'Not accepted: the text is still blue, QA reports it.' } });
+  const second = await run(app);
+  assert.equal(second.workflow.status, 'failed');
+  const received = await claude.received();
+  assert.match(received.at(-1).stdin, /the only allowed decision is "reject"/);
+  assert.match(option(received.at(-2).args, '--system-prompt'), /QA did NOT verify every acceptance criterion: you must reject/);
 });

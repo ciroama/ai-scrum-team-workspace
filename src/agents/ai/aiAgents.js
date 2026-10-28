@@ -3,16 +3,16 @@
 // but every decision here comes from a model, and every model call is
 // reported back (aiCalls) so the activity log can show it.
 //
-// What stays rule-based on purpose:
+// What stays independent of the model on purpose:
 //  - QA is always scripted: it turns the PO's machine-checkable criteria into
 //    deterministic tests, independent of the model that wrote the code.
-//  - The PO's final acceptance is the evidence rule (accepted only when QA's
-//    checks all passed). It is labelled as rule-based, not as AI.
+//  - The PO's final review is a model decision, but it can only reject what
+//    QA did not verify; it can never accept it.
 
 import { Agent, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
-import { ContractError, WEB_CHECK_TYPES, validateDevReply, validatePoReply } from '../../ai/contracts.js';
+import { ContractError, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateReviewReply } from '../../ai/contracts.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
 
@@ -149,9 +149,43 @@ export class AiProductOwnerAgent extends Agent {
     };
   }
 
-  /** Acceptance is rule-based: accepted only when QA verified every criterion. */
-  review(input) {
-    return { ...this.rules.review(input), decidedBy: 'rule' };
+  /**
+   * The acceptance decision, made by the model from the request, the agreed
+   * requirements, QA's evidence and the product files. Guard: it may reject
+   * a product whose tests pass, but cannot accept one QA did not verify.
+   */
+  async review({ spec, verification, files = [] }) {
+    const evidence = this.rules.review({ spec, verification });
+    const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
+    const system = [
+      'You are the Product Owner (PO) of a small software team, doing the final review of an increment.',
+      'You receive the user\'s request, the agreed requirements and acceptance criteria, the result of QA\'s automated verification, and the product files.',
+      'Decide whether to accept the product:',
+      '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
+      '- Reject if QA did not verify every criterion, or if, reading the files, the product does not really do what the user asked (even when the tests pass). Explain why.',
+      qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
+      'Answer with a JSON object only: {"decision":"accept" | "reject","summary":"one or two sentences for the user","reasons":["..."]}',
+    ].join('\n');
+    const user = JSON.stringify(
+      {
+        request: spec.requestText,
+        requirements: spec.requirements,
+        acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
+        qaVerification: verification
+          ? { executed: verification.executed, verdict: verification.verdict, criteria: verification.criteria, tests: verification.testSummary, openDefects: verification.defects?.map((d) => d.title) ?? [] }
+          : { executed: false },
+        files: files.map((f) => ({ path: f.path, content: f.content })),
+      },
+      null,
+      2,
+    );
+    const { value, aiCalls } = await askWithContract(this.getClient, {
+      system,
+      user,
+      validate: (reply) => validateReviewReply(reply, { qaPassed }),
+      purpose: 'review the verified outcome',
+    });
+    return { accepted: value.accepted, summary: value.summary, reasons: value.reasons, unmet: evidence.unmet, decidedBy: 'ai', aiCalls };
   }
 }
 

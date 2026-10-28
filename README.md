@@ -98,9 +98,13 @@ You choose each agent's **Brain** on the Team page:
   **runs in a browser from static files** (HTML, CSS and JavaScript, with no
   server and no external resources): from a simple page to a small game.
 
-The PO's **final acceptance is always a rule**, even when the PO is
-AI-powered: the product is accepted only if QA verified every acceptance
-criterion. The dashboard labels that decision as rule-based.
+When the PO is AI-powered, its **final acceptance** is an AI decision too:
+the PO reads the request, the requirements, QA's results and the product
+files, then accepts or rejects with its reasons. One guard stays fixed: the
+PO **may reject** a product whose tests pass (for example when it does not
+really do what you asked), but **cannot accept** one that QA did not
+verify. The scripted PO accepts by rule: only if QA verified every
+criterion.
 
 ## How a request flows
 
@@ -133,8 +137,9 @@ flowchart LR
 4. **Correction (Developer).** If tests fail, QA sends the defects back. The
    Developer gets up to three attempts in total; then the workflow ends as
    failed and the open defects stay visible.
-5. **Final review (PO).** The PO accepts the product only if QA verified
-   every criterion.
+5. **Final review (PO).** The PO accepts or rejects the product. It can
+   never accept one that QA did not verify; an AI-powered PO can also reject
+   a product whose tests pass, and says why.
 
 One workflow runs at a time. A blocked workflow keeps that slot until you
 resume or cancel it.

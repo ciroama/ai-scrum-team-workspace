@@ -314,8 +314,12 @@ function conversationItems(state, detail, ui, actions) {
           agentMessage(
             state,
             event,
-            h('p', null, event.summary),
-            d.decidedBy === 'rule' ? h('p', { className: 'muted small' }, 'Acceptance rule, not an AI decision: the PO accepts only when QA has verified every criterion.') : null,
+            [h('p', null, event.summary), d.reasons && d.reasons.length ? h('ul', { className: 'plan' }, d.reasons.map((r) => h('li', null, h('span', { className: 'num' }, '•'), h('span', null, r)))) : null],
+            d.decidedBy === 'rule'
+              ? h('p', { className: 'muted small' }, 'Acceptance rule, not an AI decision: the PO accepts only when QA has verified every criterion.')
+              : d.decidedBy === 'ai'
+                ? h('p', { className: 'muted small' }, 'Decided by the AI-powered PO after reading the files and QA\'s evidence. It can reject a product whose tests pass, but cannot accept one that QA did not verify.')
+                : null,
           ),
         );
         break;

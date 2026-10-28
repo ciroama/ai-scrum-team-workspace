@@ -41,7 +41,7 @@ Browser (public/)                         Node.js server (src/)
 | Agent | Method | Input | Output |
 |---|---|---|---|
 | PO | `analyse` | request text, recipe catalogue | `ready` + spec (requirements, acceptance criteria with machine-checkable checks, handoff message), or `needs_clarification` + message + supported types |
-| PO | `review` | spec, QA verification record | accepted / not accepted, unmet criteria |
+| PO | `review` | spec, QA verification record, product files (AI PO) | accepted / not accepted, summary, reasons, unmet criteria. Scripted PO: the evidence rule. AI PO: a model decision validated by `validateReviewReply`, which refuses "accept" unless QA verified every criterion |
 | Developer | `implement` | spec, attempt number, QA defects | files to write, summary, handoff message |
 | QA | `planVerification` | spec, implemented files | acceptance test file, required files, commands |
 | QA | `evaluate` | spec, recorded results (missing files, exit codes, parsed tests) | verdict, per-criterion results, defects, handoff or feedback message |

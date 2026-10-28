@@ -132,6 +132,26 @@ function normaliseCheck(check) {
 }
 
 /**
+ * Validates the PO's acceptance decision. The PO may reject a product whose
+ * tests pass, but never accept one that QA did not verify.
+ * @param {object} reply
+ * @param {{ qaPassed: boolean }} context
+ * @returns {{ accepted: boolean, summary: string, reasons: string[] }}
+ */
+export function validateReviewReply(reply, { qaPassed }) {
+  const problems = [];
+  if (reply.decision !== 'accept' && reply.decision !== 'reject') problems.push('"decision" must be "accept" or "reject".');
+  if (!isText(reply.summary, 800)) problems.push('"summary" (one or two sentences for the user) is required.');
+  if (reply.decision === 'accept' && !qaPassed) problems.push('QA did not verify every acceptance criterion, so the only allowed decision is "reject".');
+  if (problems.length) throw new ContractError(problems);
+  return {
+    accepted: reply.decision === 'accept',
+    summary: reply.summary.trim(),
+    reasons: Array.isArray(reply.reasons) ? reply.reasons.filter((r) => isText(r, 500)).map((r) => r.trim()).slice(0, 10) : [],
+  };
+}
+
+/**
  * Validates the Developer's reply.
  * @returns {{ files: Array<{ path: string, purpose: string, content: string }>, summary: string | null, handoffMessage: string | null }}
  */
