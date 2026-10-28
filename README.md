@@ -7,8 +7,9 @@ recorded: requirements, handoffs, files, commands, test results, defects,
 corrections, Git commits and every AI request.
 
 > **Status: experimental.** This is a personal research project, not a
-> product. The team builds small static web pages; the point is to observe
-> the team at work, not the quality of what it builds.
+> product. The team builds small products that run in the browser; the
+> point is to observe and measure the team at work, not the quality of what
+> it builds.
 
 ## Contents
 
@@ -43,8 +44,13 @@ Scrum team does:
 To learn anything from that, **everything the dashboard shows has to be
 real**. A nice-looking simulation would be useless, so the project follows a
 few strict rules (below). The products are deliberately small, such as a
-Hello World page or a coloured landing page, so that a whole cycle takes
-minutes and is easy to inspect.
+Hello World page, a coloured landing page or a simple browser game, so that a
+whole cycle takes minutes and is easy to inspect.
+
+The architecture is deliberately simple for the same reason. The goal is
+the measurements (how the team works, how often it needs a human, where it
+fails), not the product it delivers. Every extra layer of technology would
+add noise to what is being observed.
 
 ## Ground rules
 
@@ -88,9 +94,9 @@ You choose each agent's **Brain** on the Team page:
   request, a **Hello World web application**, and honestly answers "needs
   clarification" for anything else.
 - **AI-powered** (PO and Developer): the agent's decisions come from a
-  Claude model through Claude Code. The team can then build any **static
-  web page** (HTML, CSS and browser JavaScript, with no server and no
-  external resources).
+  Claude model through Claude Code. The team can then build anything that
+  **runs in a browser from static files** (HTML, CSS and JavaScript, with no
+  server and no external resources): from a simple page to a small game.
 
 The PO's **final acceptance is always a rule**, even when the PO is
 AI-powered: the product is accepted only if QA verified every acceptance
@@ -327,8 +333,8 @@ dashboard and saved in the local database.
   `127.0.0.1`. There is no login, so do not expose them to a network.
 - **Generated code runs locally.** QA runs the generated tests with Node.js
   on your computer, and the preview serves the generated page. The AI
-  produces only static web pages, checked against the contract before they
-  are written.
+  produces only static files (pages, styles, browser scripts), checked
+  against the contract before they are written.
 - **Deletion is real.** Deleting a product removes its records and its
   folder.
 
@@ -378,10 +384,14 @@ integration was checked by hand.
 
 - The **scripted** agents know one request type: a Hello World web
   application.
-- The **AI-powered** team builds static web pages only.
+- The **AI-powered** team builds products made of static files that run in
+  the browser, such as pages and simple games: at most 8 files of up to
+  200 KB each, with no server and no external resources.
 - QA's checks are deterministic but simple: visible text, page title, files,
   CSS property values (colours compared after normalisation) and centred
-  layout. QA does not use a browser, so it cannot judge visual quality.
+  layout. QA does not use a browser, so it cannot judge visual quality or
+  check behaviour, such as whether a game actually plays by its rules. That
+  still needs a human.
 - QA itself is not AI-powered, by design.
 - One workflow at a time. An interrupted stage reruns from its start.
 - The AI's output depends on the model. Answers that break the contract
