@@ -36,7 +36,19 @@ export function agentLabel(state, id) {
   return agent ? agent.label : 'System';
 }
 
+/** The badge for a recorded event: an AI-powered PO's acceptance is a rule, not AI. */
+export function eventKindBadge(event) {
+  return kindBadge(event.detail && event.detail.decidedBy === 'rule' ? 'rule' : event.actorKind);
+}
+
 export function kindBadge(kind, model) {
+  if (kind === 'rule') {
+    return h(
+      'span',
+      { className: 'badge badge-scripted', title: 'The PO is AI-powered, but this decision is a fixed rule: the product is accepted only if QA verified every acceptance criterion. No AI model decided it.' },
+      'Rule-based',
+    );
+  }
   if (kind === 'scripted') return h('span', { className: 'badge badge-scripted', title: 'Fixed rules and templates in code. No AI model.' }, 'Scripted');
   if (kind === 'ai') return h('span', { className: 'badge badge-ai', title: `Decisions made by an AI model via Claude Code${model ? ` (${model})` : ''}` }, 'AI-powered');
   if (kind === 'human') return h('span', { className: 'badge badge-human' }, 'Human');
@@ -391,7 +403,7 @@ export function timelineEvent(event, state, ui) {
         'div',
         { className: 'event-head' },
         actorBlock,
-        kindBadge(event.actorKind),
+        eventKindBadge(event),
         h('span', { className: 'event-cat' }, CATEGORY_LABEL[event.category] || event.category),
         h('time', { className: 'event-time', datetime: event.ts }, time(event.ts)),
       ),
