@@ -388,7 +388,6 @@ export function renderConversation(state, detail, ui, actions) {
     mount(
       list,
       h('li', { className: 'empty' }, 'No conversation yet. Write your requirement below, for example "Build a simple Hello World web application.", and click Start workflow.'),
-      state.workspaceEvents.length ? state.workspaceEvents.map((e) => note(e)) : null,
     );
     return;
   }
@@ -544,7 +543,9 @@ export function renderRail(state, detail, ui, actions) {
 /** The latest recorded events of the workflow on screen. */
 export function renderActivity(state, detail) {
   if (!document.getElementById('activity-compact')) return;
-  const events = (detail ? detail.events : state.workspaceEvents).filter((e) => e.type !== 'command.started');
+  // A clean workspace shows no activity: configuration changes made between
+  // requests stay on the Team Activity page.
+  const events = (detail ? detail.events : []).filter((e) => e.type !== 'command.started');
   const recent = events.slice(-8);
   mount(
     'activity-compact',
