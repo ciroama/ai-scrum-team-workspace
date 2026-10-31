@@ -23,6 +23,18 @@ const truncate = (text) =>
   text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}\n… (${text.length - OUTPUT_LIMIT} more characters)` : text;
 const formatMs = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
+/** QA's own files: deterministic acceptance tests and AI-written tests. */
+const isQaFile = (path) => path.startsWith('test/') || path.startsWith('qa/');
+
+/**
+ * The arguments a QA command really runs with. AI-written tests run in-process
+ * under Node's permission model: they may read the product folder and nothing
+ * else, write nothing, and start no processes or workers.
+ */
+function sandboxArgs(command, dir) {
+  return command.kind === 'ai-tests' ? ['--permission', `--allow-fs-read=${dir}`, ...command.args] : command.args;
+}
+
 const STAGE_CATEGORY = {
   analysis: 'analysis',
   implementation: 'implementation',
@@ -331,7 +343,7 @@ export class Orchestrator {
     if (!this.team.has(agentId)) throw new NotFoundError(`Unknown agent "${agentId}"`);
     if (mode !== 'scripted' && mode !== 'ai') throw new ValidationError('"mode" must be "scripted" or "ai"');
     if (mode === 'ai' && !this.team.supportsAi?.(agentId)) {
-      throw new ValidationError(`${this.label(agentId)} is always scripted in this workspace (QA stays independent of the AI).`);
+      throw new ValidationError(`${this.label(agentId)} has no AI-powered version in this workspace.`);
     }
     if (this.repository.getAgentMode(agentId) === mode) return { changed: false };
     this.repository.setAgentMode(agentId, mode);
@@ -528,7 +540,7 @@ export class Orchestrator {
         to: 'user',
         status: 'warning',
         summary: result.message,
-        detail: { reason: result.reason, supported: result.supported },
+        detail: { reason: result.reason, supported: result.supported, questions: result.questions ?? null, round: (workflow.state.dialogue ?? []).length + 1 },
       });
       this.#event(workflow.id, {
         type: 'workflow.needs_clarification',
@@ -558,6 +570,7 @@ export class Orchestrator {
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
         version: spec.version,
         changes: spec.changes ?? null,
+        assumptions: spec.assumptions ?? null,
       },
     });
     say({
@@ -584,7 +597,7 @@ export class Orchestrator {
 
     const changing = Boolean(state.base);
     const currentFiles =
-      correcting || changing ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/')) : [];
+      correcting || changing ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path)) : [];
     const result = await agent.implement({ spec: state.spec, attempt, defects, currentFiles, change: changing ? { previousSpec: state.base.spec } : null });
     this.#recordAiCalls(ctx, result.aiCalls);
     const written = await this.#writeFiles(ctx, result.files);
@@ -610,13 +623,18 @@ export class Orchestrator {
   async #verification(ctx) {
     const { workflow, agent, dir, say } = ctx;
     const state = workflow.state;
-    const plan = await agent.planVerification({ spec: state.spec, implementation: state.implementation });
+    const productFiles = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path));
+    const plan = await agent.planVerification({ spec: state.spec, implementation: state.implementation, dialogue: state.dialogue ?? [], files: productFiles });
+    this.#recordAiCalls(ctx, plan.aiCalls);
     say({
       type: 'qa.plan',
       summary: plan.summary,
-      detail: { commands: plan.commands.map((c) => ({ label: c.label, command: `node ${c.args.join(' ')}` })) },
+      detail: { commands: plan.commands.map((c) => ({ label: c.label, command: `node ${sandboxArgs(c, dir).join(' ')}` })) },
     });
-    await this.#writeFiles(ctx, [plan.testFile]);
+    await this.#writeFiles(ctx, [plan.testFile, ...(plan.extraFiles ?? [])]);
+    for (const concern of plan.concerns ?? []) {
+      say({ type: 'qa.concern', category: 'test', from: agent.id, to: 'po', status: 'warning', summary: concern, detail: { concern } });
+    }
 
     const missingFiles = plan.requiredFiles.filter((path) => !existsSync(resolveInside(dir, path)));
     say({
@@ -632,6 +650,14 @@ export class Orchestrator {
     for (const command of plan.commands) commands.push(await this.#runNode(ctx, command));
 
     const evaluation = await agent.evaluate({ spec: state.spec, results: { missingFiles, commands } });
+    if (evaluation.aiTests?.problem) {
+      say({
+        type: 'qa.ai-tests-failed',
+        status: 'warning',
+        summary: "QA's own (AI-written) tests could not run, so they count neither for nor against the product. The deterministic checks decide.",
+        error: evaluation.aiTests.problem,
+      });
+    }
     const passed = evaluation.verdict === 'pass';
     say({
       type: 'qa.verdict',
@@ -650,6 +676,8 @@ export class Orchestrator {
       criteria: evaluation.criteria,
       defects: evaluation.defects,
       testSummary: evaluation.testSummary,
+      aiTests: evaluation.aiTests ?? null,
+      concerns: plan.concerns ?? [],
       attempt: state.attempt,
       commit,
       at: now(),
@@ -691,7 +719,7 @@ export class Orchestrator {
   async #review(ctx) {
     const { workflow, agent, say } = ctx;
     const state = workflow.state;
-    const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !f.path.startsWith('test/'));
+    const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path));
     const rejections = state.poRejections ?? [];
     const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files, previousRejections: rejections });
     this.#recordAiCalls(ctx, review.aiCalls);
@@ -778,9 +806,10 @@ export class Orchestrator {
   }
 
   async #runNode({ dir, say }, command) {
-    const display = `node ${command.args.join(' ')}`;
+    const args = sandboxArgs(command, dir);
+    const display = `node ${args.join(' ')}`;
     say({ type: 'command.started', category: 'command', summary: `${command.label}: ${display}`, detail: { command: display, cwd: dir } });
-    const run = await runCommand({ command: process.execPath, args: command.args, cwd: dir, timeoutMs: this.commandTimeoutMs });
+    const run = await runCommand({ command: process.execPath, args, cwd: dir, timeoutMs: this.commandTimeoutMs });
     const result = { ...command, exitCode: run.exitCode, timedOut: run.timedOut, durationMs: run.durationMs, stdout: run.stdout, stderr: run.stderr };
 
     say({
@@ -798,6 +827,18 @@ export class Orchestrator {
       },
     });
 
+    if (command.kind === 'ai-tests') {
+      const { tests, summary } = parseTap(run.stdout);
+      result.tests = tests.filter((t) => !t.suite);
+      result.summary = summary;
+      say({
+        type: 'qa.ai-tests',
+        category: 'test',
+        status: summary.fail === 0 && summary.tests > 0 && run.exitCode === 0 ? 'success' : 'failure',
+        summary: `QA (AI) tests: ${summary.tests ?? 0} tests, ${summary.pass ?? 0} passed, ${summary.fail ?? 0} failed (read-only access to the product folder).`,
+        detail: { summary, tests: result.tests, exitCode: run.exitCode },
+      });
+    }
     if (command.kind === 'tests') {
       const { tests, summary } = parseTap(run.stdout);
       result.tests = tests.filter((t) => !t.suite);

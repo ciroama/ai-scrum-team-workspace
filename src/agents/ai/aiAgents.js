@@ -4,15 +4,17 @@
 // reported back (aiCalls) so the activity log can show it.
 //
 // What stays independent of the model on purpose:
-//  - QA is always scripted: it turns the PO's machine-checkable criteria into
-//    deterministic tests, independent of the model that wrote the code.
+//  - QA's deterministic checks always run, also when QA is AI-powered: they
+//    turn the PO's machine-checkable criteria into tests no model can talk
+//    round. An AI-powered QA only adds its own tests and concerns.
 //  - The PO's final review is a model decision, but it can only reject what
 //    QA did not verify; it can never accept it.
 
 import { Agent, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
-import { ContractError, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateReviewReply } from '../../ai/contracts.js';
+import { ContractError, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply } from '../../ai/contracts.js';
+import { QaAgent } from '../qa.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
 
@@ -65,6 +67,9 @@ export class AiProductOwnerAgent extends Agent {
     const system = [
       'You are the Product Owner (PO) of a small software team.',
       PRODUCT_SCOPE,
+      'Behave like a real PO in backlog refinement: never build on guesses. Before writing requirements, look for everything the request leaves open: what exactly it is, scope, content and texts, look and layout, behaviour and rules, controls, states (start, end, errors, empty), edge cases, and how success is judged.',
+      'When anything that matters is open, stop and ask (status "needs_clarification"): several numbered questions at once, each with why it matters and, where useful, a few options. A short request like "build a game" always needs questions.',
+      'Only the user decides. If the user answers "you decide" (or similar) about something, you may decide it, and you record it as an assumption with "decidedBy": "po".',
       ...(current
         ? [
             'The product already exists. You receive its current requirements and acceptance criteria, and a change request from the user.',
@@ -72,26 +77,30 @@ export class AiProductOwnerAgent extends Agent {
             '- Keep every current requirement and criterion that the change does not touch, unchanged.',
             '- Modify the ones the change affects, remove the ones it contradicts, and add new ones for what it asks.',
             '- Return the COMPLETE updated lists (not only the changes), and list what you did in "changes", e.g. "Changed: the text colour is now blue (was red)".',
-            '- If the change request is unclear, or cannot be built as such a static web page, answer with status "needs_clarification".',
+            '- If the change request is unclear or leaves something open, or cannot be built as such a static web page, answer with status "needs_clarification" and ask.',
           ]
         : [
             'Read the user\'s request and decide:',
-            '- If it can be built as such a static web page and is clear enough, answer with status "ready".',
-            '- If it cannot be built that way, or an essential detail is missing or contradictory, answer with status "needs_clarification" and ask one clear question.',
+            '- If it can be built as such a static web page and nothing that matters is left open, answer with status "ready".',
+            '- If it cannot be built that way, or anything that matters is missing, vague or contradictory, answer with status "needs_clarification" and ask.',
           ]),
-      'If a clarification dialogue is included, the user\'s answers complete the request: use them together with the request, and do not ask again about anything already answered.',
+      'If a clarification dialogue is included, the user\'s answers complete the request: use them together with the request, and do not ask again about anything already answered. Ask again only about what is still open.',
       'Rules for "ready":',
       '- Turn EVERY concrete detail the user asked for (texts, colours, layout, behaviour) into its own acceptance criterion. Do not drop details.',
       '- Do not add requirements the user did not ask for.',
+      '- List in "assumptions" every detail you rely on that the request does not state word for word, each with "decidedBy": "user" (the user said it, in the request or an answer) or "po" (you decided because the user asked you to).',
+      dialogue.length
+        ? '- The user has answered questions, so "decidedBy": "po" is allowed for what the user left to you.'
+        : '- The user has not answered anything yet: every assumption must be "decidedBy": "user", and "whyNoQuestions" must explain why nothing is left open. Otherwise ask.',
       '- Use texts exactly as the user wrote them (same words and capitalisation).',
       '- For colours use CSS colour names or hex codes, e.g. "green" or "#00aa00".',
       '- Every acceptance criterion needs a machine-checkable "check" of one of these types (nothing else is allowed):',
       ...Object.values(WEB_CHECK_TYPES).map((t) => `  * ${t}`),
       'Answer with a JSON object only, in this shape:',
       current
-        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"handoffMessage":"message to the Developer"}'
-        : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"handoffMessage":"message to the Developer"}',
-      'or {"status":"needs_clarification","reason":"ambiguous" | "unsupported","message":"your question to the user"}',
+        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}'
+        : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}',
+      'or {"status":"needs_clarification","reason":"ambiguous" | "unsupported","message":"one short sentence for the user","questions":[{"question":"...","why":"why it matters","options":["...","..."]}]}',
     ].join('\n');
     const user = current
       ? JSON.stringify(
@@ -111,7 +120,7 @@ export class AiProductOwnerAgent extends Agent {
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
       user,
-      validate: validatePoReply,
+      validate: (reply) => validatePoReply(reply, { firstRound: dialogue.length === 0 }),
       purpose: current ? 'apply the change request to the requirements' : 'analyse the request',
     });
 
@@ -122,6 +131,7 @@ export class AiProductOwnerAgent extends Agent {
         supported: [{ id: AI_WEB_RECIPE_ID, title: 'Static web page', summary: PRODUCT_SCOPE }],
         summary: 'The PO (AI) needs clarification before work can start.',
         message: value.message,
+        questions: value.questions,
         aiCalls,
       };
     }
@@ -132,6 +142,7 @@ export class AiProductOwnerAgent extends Agent {
       requirements: value.requirements,
       acceptanceCriteria: value.acceptanceCriteria,
       version: (current?.version ?? 0) + 1,
+      assumptions: value.assumptions,
       ...(dialogue.length ? { clarifications: dialogue } : {}),
       ...(current ? { changes: value.changes ?? [] } : {}),
     };
@@ -164,6 +175,7 @@ export class AiProductOwnerAgent extends Agent {
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
       '- Reject if QA did not verify every criterion, or if, reading the files, the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons the Developer can act on: a rejected product goes back to the Developer for rework.',
       '- If you rejected earlier versions, check whether your reasons were addressed. Do not invent new demands beyond the request and the requirements.',
+      '- If QA raised concerns that the requirements may not match the request, weigh them against the request: reject if the product misses what the user asked.',
       qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
       'Answer with a JSON object only: {"decision":"accept" | "reject","summary":"one or two sentences for the user","reasons":["..."]}',
     ].join('\n');
@@ -173,7 +185,15 @@ export class AiProductOwnerAgent extends Agent {
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
         qaVerification: verification
-          ? { executed: verification.executed, verdict: verification.verdict, criteria: verification.criteria, tests: verification.testSummary, openDefects: verification.defects?.map((d) => d.title) ?? [] }
+          ? {
+              executed: verification.executed,
+              verdict: verification.verdict,
+              criteria: verification.criteria,
+              tests: verification.testSummary,
+              qaOwnTests: verification.aiTests ?? null,
+              openDefects: verification.defects?.map((d) => d.title) ?? [],
+              qaConcerns: verification.concerns ?? [],
+            }
           : { executed: false },
         files: files.map((f) => ({ path: f.path, content: f.content })),
         ...(previousRejections.length ? { yourPreviousRejections: previousRejections } : {}),
@@ -197,6 +217,9 @@ function requirementsMarkdown(spec) {
     '',
     spec.changes ? `Change request: "${spec.requestText}"` : `Original request: "${spec.requestText}"`,
     '',
+    ...(spec.assumptions?.length
+      ? ['## Assumptions', '', ...spec.assumptions.map((a) => `- ${a.text} (${a.decidedBy === 'po' ? 'decided by the PO, as you asked' : 'from you'})`), '']
+      : []),
     ...(spec.clarifications ? ['## Clarifications', '', ...spec.clarifications.flatMap((d) => [`- PO: ${d.question}`, `  You: ${d.answer}`]), ''] : []),
     ...(spec.changes ? ['## Changes in this version', '', ...(spec.changes.length ? spec.changes.map((c) => `- ${c}`) : ['- (none listed)']), ''] : []),
     '## Requirements',
@@ -242,6 +265,7 @@ export class AiDeveloperAgent extends Agent {
       '- Do not write files in the test/ folder: it belongs to QA.',
       '- The page must work when index.html is opened directly from disk: use classic <script src="..."> tags (no type="module"), no fetch of local files, no external URLs.',
       '- Every text a criterion requires must be present in the HTML itself, not only added by JavaScript.',
+      '- Keep behaviour testable without a browser: put rules, state changes and calculations in plain functions in a .js file, and at its end export them for Node with: if (typeof module !== "undefined") module.exports = { ... }; QA may test them.',
       '- Use exactly the CSS values stated in the checks (for example the same colour name).',
       'Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"}',
     ].join('\n');
@@ -281,6 +305,97 @@ export class AiDeveloperAgent extends Agent {
         (correcting ? `Correction (attempt ${attempt}): updated ${value.files.length} files.` : `Implemented "${spec.title}": ${value.files.length} files.`),
       handoffMessage: value.handoffMessage ?? `The implementation is ready (${value.files.length} files). Please verify it against the acceptance criteria.`,
       aiCalls,
+    };
+  }
+}
+
+/**
+ * AI-powered QA. It runs the same deterministic checks as the scripted QA
+ * (they cannot be skipped), and adds its own: tests written by the model from
+ * the user's request and the clarification dialogue, not only from the PO's
+ * criteria, plus concerns when the requirements may not match the request.
+ * Its tests run with read-only access to the product folder (the
+ * orchestrator enforces that), and they can only add defects, never remove
+ * the deterministic ones.
+ */
+export class AiQaAgent extends Agent {
+  /** @param {{ getClient: () => import('../../ai/claudeCode.js').ClaudeCodeClient }} deps */
+  constructor({ getClient }) {
+    const scripted = new QaAgent();
+    super(
+      {
+        ...scripted.profile,
+        summary: 'Runs the deterministic acceptance checks, then writes and runs its own tests with an AI model, from your request and answers, and flags requirements that may not match.',
+        responsibilities: [...scripted.profile.responsibilities, 'Writes extra tests from your original request', 'Flags requirements that may not match the request'],
+      },
+      AgentKind.AI,
+    );
+    this.getClient = getClient;
+    this.rules = scripted;
+  }
+
+  async planVerification({ spec, implementation, dialogue = [], files = [] }) {
+    const base = this.rules.planVerification({ spec, implementation });
+    const system = [
+      'You are the QA engineer of a small software team. The deterministic acceptance tests for the PO\'s criteria already exist and always run.',
+      'Your job is to find what they miss: write additional automated tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, not only from the PO\'s criteria, and flag where the requirements may not match what the user asked.',
+      PRODUCT_SCOPE,
+      'Write ONE ES module (it will be saved as ' + QA_AI_TEST_FILE + ' and run with `node --test-reporter=tap` from the product folder) that:',
+      '- uses node:test (`import { test } from "node:test"`) and node:assert/strict; it may also use node:fs, node:path, node:vm, node:module and node:url, and nothing else;',
+      '- names every test "QA-AI: <what it checks>";',
+      '- reads product files relative to process.cwd() (the product folder); it has READ-ONLY access, no network and cannot start processes;',
+      '- tests behaviour where the files allow it: plain .js files that export functions for Node can be loaded with createRequire(import.meta.url)("../file.js"); otherwise check the HTML, CSS and scripts as text;',
+      '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
+      'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
+      'Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>","concerns":["a requirement that may not match the request, and why"]}',
+    ].join('\n');
+    const user = JSON.stringify(
+      {
+        request: spec.requestText,
+        clarificationDialogue: dialogue,
+        requirements: spec.requirements,
+        acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
+        assumptions: spec.assumptions ?? [],
+        files: files.map((f) => ({ path: f.path, content: f.content })),
+      },
+      null,
+      2,
+    );
+    const { value, aiCalls } = await askWithContract(this.getClient, { system, user, validate: validateQaReply, purpose: 'write QA tests from the request' });
+    return {
+      ...base,
+      summary: `${base.summary} Plus ${value.tests} test${value.tests === 1 ? '' : 's'} of its own from your request${value.summary ? `: ${value.summary}` : '.'}`,
+      extraFiles: [{ path: QA_AI_TEST_FILE, purpose: 'QA (AI) tests written from the original request and the clarification dialogue', content: value.testFile }],
+      commands: [...base.commands, { id: 'ai-tests', kind: 'ai-tests', label: 'Run QA (AI) tests with read-only access', args: ['--test-reporter=tap', QA_AI_TEST_FILE] }],
+      concerns: value.concerns,
+      aiCalls,
+    };
+  }
+
+  /** The deterministic verdict, plus a defect for every failing QA (AI) test. */
+  evaluate({ spec, results }) {
+    const base = this.rules.evaluate({ spec, results });
+    const run = results.commands.find((c) => c.kind === 'ai-tests');
+    const tests = run?.tests ?? [];
+    const failed = tests.filter((t) => t.status === 'fail');
+    // A test file that crashed is QA's own problem, not a product defect.
+    const problem = run && (run.timedOut || (!tests.length && run.exitCode !== 0)) ? (run.stderr || run.stdout).trim().slice(0, 1500) || `exit code ${run.exitCode}` : null;
+    const aiDefects = failed.map((t) => ({ title: `${t.name} failed`, expected: t.expected ?? null, actual: t.actual ?? t.error?.split('\n')[0] ?? null, evidence: t.error, reportedBy: 'QA (AI test)' }));
+    const aiTests = { tests: tests.length, pass: tests.filter((t) => t.status === 'pass').length, fail: failed.length, problem };
+    const defects = [...base.defects, ...aiDefects];
+    const verdict = base.verdict === 'pass' && !aiDefects.length ? 'pass' : 'fail';
+    const ownText = run ? (problem ? 'its own tests could not run' : `${aiTests.pass} of ${aiTests.tests} of its own tests passed`) : 'no tests of its own';
+    if (verdict === 'pass') {
+      return { ...base, verdict, defects, aiTests, summary: `${base.summary.replace(/\.$/, '')}; QA (AI): ${ownText}.`, handoffMessage: `${base.handoffMessage} QA (AI): ${ownText}.` };
+    }
+    const first = defects[0];
+    return {
+      ...base,
+      verdict,
+      defects,
+      aiTests,
+      summary: `Verification failed: ${defects.length} defect(s) (${base.defects.length} from the acceptance checks, ${aiDefects.length} from QA's own tests).`,
+      feedbackMessage: `Verification failed with ${defects.length} defect(s). ${first.title}. Please correct the implementation and hand it back for re-testing.`,
     };
   }
 }

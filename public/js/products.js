@@ -4,6 +4,7 @@
 
 import { dateTime, duration, h, icon, mount } from './dom.js';
 import { statusLabel, verificationBadge } from './views.js';
+import { assumptionList } from './workspace.js';
 
 /** The product the dashboard currently shows, if any. */
 export function currentProductId(state, detail) {
@@ -189,6 +190,13 @@ export function renderRequirements(state, ui, actions) {
                 h('ol', { className: 'plan' }, it.spec.requirements.map((r, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, r)))),
                 h('p', { className: 'muted small' }, 'Acceptance criteria'),
                 h('ol', { className: 'plan' }, it.spec.acceptanceCriteria.map((c) => h('li', null, h('span', { className: 'num ac' }, c.id), h('span', null, c.description)))),
+                assumptionList(it.spec.assumptions),
+                it.spec.clarifications && it.spec.clarifications.length
+                  ? [
+                      h('p', { className: 'muted small' }, `Clarification with the PO (${it.spec.clarifications.length} answer${it.spec.clarifications.length === 1 ? '' : 's'})`),
+                      h('ol', { className: 'plan' }, it.spec.clarifications.map((c, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('span', { className: 'muted', style: 'display:block;white-space:pre-line' }, `PO: ${c.question}`), `You: ${c.answer}`)))),
+                    ]
+                  : null,
               ]
             : h('p', { className: 'muted small' }, 'The PO did not agree requirements for this request (see its conversation).'),
           h('button', { type: 'button', className: 'link-button small', onclick: () => { actions.select(it.workflowId); location.hash = '#/'; } }, 'Open its conversation ', icon('chevron')),

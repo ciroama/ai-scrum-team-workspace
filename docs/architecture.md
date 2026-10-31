@@ -33,7 +33,8 @@ Browser (public/)                         Node.js server (src/)
   cancel blocked workflows.
 - **PO, Developer, QA**: the three agents. Each is `AgentKind.SCRIPTED` by
   default. The PO and the Developer can be switched to `AgentKind.AI`
-  (Claude Code); QA is always scripted.
+  (Claude Code), and so can QA: an AI-powered QA keeps the deterministic
+  checks and adds its own tests.
 - **Orchestrator**: infrastructure. It makes no product decisions.
 
 ## Agent contracts (structured inputs and outputs)
@@ -224,8 +225,24 @@ The first AI integration used GitHub Models. That service was retired on
 - `src/ai/aiSettings.js` keeps the model (default `sonnet`) and the last
   connection test in the local `settings` table. No credential is stored.
 - `src/agents/roster.js` gives the orchestrator, for each role, the scripted
-  or AI agent that matches `agent_config.mode`. Only the PO and the Developer
-  have AI versions. **QA is always scripted.**
+  or AI agent that matches `agent_config.mode`. All three have AI versions.
+- **PO refinement** (`validatePoReply(reply, { firstRound })`): questions
+  are structured (`questions: [{ question, why, options }]`, at most 8 per
+  round) and recorded on `po.clarification` with the round number. A
+  "ready" answer must list `assumptions: [{ text, decidedBy: 'user' | 'po' }]`;
+  on the first round (no answers yet) any `decidedBy: 'po'` is refused, and
+  `whyNoQuestions` is required, so the retry has to ask instead.
+- **AI-powered QA** (`AiQaAgent`): runs the scripted QA's plan and evaluation
+  unchanged, then adds `qa/ai-checks.mjs` (from `validateQaReply`: allowed
+  modules only, no network, must parse with `node --check`, tests named
+  `QA-AI: ...`). The orchestrator runs it as
+  `node --permission --allow-fs-read=<product> --test-reporter=tap qa/ai-checks.mjs`
+  (read-only, no child processes or workers), records `qa.ai-tests`, turns
+  failures into defects (`reportedBy: 'QA (AI test)'`) and records
+  `qa.concern` events, which the AI PO receives in its review. A crashing
+  test file is recorded as `qa.ai-tests-failed` and never counts against the
+  product. `qa/` and `test/` are reserved for QA in the Developer's
+  contract.
 - `src/agents/ai/aiAgents.js`: the AI PO and AI Developer implement the same
   contracts as the scripted agents. `src/ai/contracts.js` validates every
   reply:

@@ -31,6 +31,9 @@ export function statisticsCsv(source, filter, catalogue) {
   const data = computeAnalytics(source, filter, catalogue);
   const rows = [
     ...data.kpis.map((k) => ({ section: 'KPI', metric: k.label, value: k.value, unit: k.unit, detail: k.detail, source: k.source, basis: k.basis })),
+    ...['po', 'dev', 'qa'].flatMap((agent) =>
+      data.process[agent].map((m) => ({ section: `Team process: ${{ po: 'PO', dev: 'Developer', qa: 'QA' }[agent]}`, metric: m.label, value: m.value, unit: m.unit, detail: m.detail, source: m.source, basis: m.basis })),
+    ),
     ...data.outcomes.map((o) => ({ section: 'Workflow outcome', metric: o.label, value: o.value, unit: 'count', source: 'recorded', basis: 'Current status of each selected workflow.' })),
     ...data.agents.flatMap((a) => [
       { section: `Agent: ${a.label}`, metric: 'Tasks completed', value: a.tasksCompleted, unit: 'count', source: 'recorded' },
@@ -89,7 +92,9 @@ export function requestsCsv(source, filter) {
     ['duration ms', (r) => durationMs(r.w.createdAt, r.w.finishedAt)],
     ['status', (r) => r.w.status],
     ['verified by QA', (r) => r.w.verified],
-    ['clarification answers', (r) => r.w.state?.dialogue?.length ?? 0],
+    ['PO interruptions', (r) => eventsOf(r.w.id, 'po.clarification').length],
+    ['PO questions', (r) => eventsOf(r.w.id, 'po.clarification').reduce((n, e) => n + (e.detail?.questions?.length || 1), 0)],
+    ['your answers', (r) => eventsOf(r.w.id, 'clarification.answered').length],
     ['requirements version', (r) => r.spec?.version ?? null],
     ['requirements', (r) => r.spec?.requirements.length ?? null],
     ['acceptance criteria', (r) => r.spec?.acceptanceCriteria.length ?? null],

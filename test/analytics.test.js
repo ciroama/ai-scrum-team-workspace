@@ -207,7 +207,7 @@ test('CSV exports contain the recorded data and follow the filters', async (t) =
   assert.equal(lines.length, 3, 'header + one row per request');
   const hello = lines.find((l) => l.startsWith(product.id));
   assert.match(hello, /,new product,Build a simple Hello World web application\.,/);
-  assert.match(hello, /,completed,true,0,1,/);
+  assert.match(hello, /,completed,true,0,0,0,1,/, 'no PO interruptions, no questions, no answers, requirements v1');
   // Text that a spreadsheet would run as a formula is neutralised, quotes are escaped.
   assert.ok(lines.some((l) => l.includes('"\'=HYPERLINK(""http://x""), ""quoted"""')));
 
@@ -218,4 +218,18 @@ test('CSV exports contain the recorded data and follow the filters', async (t) =
   assert.ok(tasks.slice(1).every((l) => l.split(',')[1] === product.id));
 
   assert.equal((await fetch(`${app.url}/api/analytics/export/requests.csv?from=nope`)).status, 400);
+});
+
+test('PO interruptions count each time the PO stopped to ask, and your answers', async (t) => {
+  const ctx = await setup(t);
+  await ctx.orchestrator.submit(HELLO).done;
+  const asked = await ctx.orchestrator.submit('Build a futuristic Breakout game').done;
+  const again = await ctx.orchestrator.answer(asked.id, 'A Breakout game, please').done;
+  assert.equal(again.status, 'needs_clarification', 'the scripted PO still cannot build it');
+  await ctx.orchestrator.answer(asked.id, HELLO).done;
+
+  const kpi = analyse(ctx).kpis.find((k) => k.key === 'poInterruptions');
+  assert.equal(kpi.value, 2);
+  assert.equal(kpi.detail, '2 questions · in 1 of 2 requests · 2 answered');
+  assert.equal(kpi.source, 'recorded');
 });

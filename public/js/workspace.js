@@ -41,8 +41,10 @@ export function renderNav(ui) {
 /** One honest line about how the agents currently decide. */
 export function teamModeText(state) {
   const ai = state.agents.filter((a) => a.mode === 'ai').map((a) => a.label);
+  const scripted = state.agents.filter((a) => a.mode !== 'ai').map((a) => a.label);
   if (!ai.length) return 'Scripted agents · no AI model';
-  return `${ai.join(' and ')}: AI-powered (Claude Code) · QA: scripted`;
+  const list = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]);
+  return `${list(ai)}: AI-powered (Claude Code)${scripted.length ? ` · ${list(scripted)}: scripted` : ''}`;
 }
 
 export function renderSidebarStatus(state, ui) {
@@ -238,6 +240,19 @@ function agentMessage(state, event, body, extra) {
   );
 }
 
+/** Assumptions behind the requirements, saying who decided each one. */
+export function assumptionList(assumptions) {
+  if (!assumptions || !assumptions.length) return null;
+  return [
+    h('p', { className: 'muted small' }, 'Assumptions'),
+    h(
+      'ul',
+      { className: 'plan' },
+      assumptions.map((a) => h('li', null, h('span', { className: `num tag ${a.decidedBy === 'po' ? 'by-po' : 'by-you'}` }, a.decidedBy === 'po' ? 'PO' : 'You'), h('span', null, a.text, h('span', { className: 'muted small' }, a.decidedBy === 'po' ? ' — decided by the PO, as you asked' : ' — from you')))),
+    ),
+  ];
+}
+
 function note(event, text) {
   return h(
     'li',
@@ -278,6 +293,7 @@ function conversationItems(state, detail, ui, actions) {
               h('ol', { className: 'plan' }, d.requirements.map((r, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, r)))),
               h('p', { className: 'muted small' }, 'Acceptance criteria'),
               h('ol', { className: 'plan' }, d.acceptanceCriteria.map((c) => h('li', null, h('span', { className: 'num ac' }, c.id), h('span', null, c.description)))),
+              assumptionList(d.assumptions),
             ],
           ),
         );
@@ -287,7 +303,29 @@ function conversationItems(state, detail, ui, actions) {
           agentMessage(
             state,
             event,
-            [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.supported || []).map((r) => h('li', null, h('span', { className: 'num' }, '✓'), h('span', null, h('strong', null, r.title), ` — ${r.summary}`))))],
+            d.questions && d.questions.length
+              ? [
+                  h('p', null, event.summary.split('\n')[0]),
+                  h(
+                    'ol',
+                    { className: 'plan' },
+                    d.questions.map((q, i) =>
+                      h(
+                        'li',
+                        null,
+                        h('span', { className: 'num' }, i + 1),
+                        h(
+                          'span',
+                          null,
+                          h('strong', null, q.question),
+                          q.options && q.options.length ? h('span', { className: 'muted' }, ` — ${q.options.join(' / ')}`) : null,
+                          q.why ? h('span', { className: 'muted small', style: 'display:block' }, `Why it matters: ${q.why}`) : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                ]
+              : [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.supported || []).map((r) => h('li', null, h('span', { className: 'num' }, '✓'), h('span', null, h('strong', null, r.title), ` — ${r.summary}`))))],
             workflow.status === 'needs_clarification' && event === last(events.filter((e) => e.type === 'po.clarification'))
               ? h('p', { className: 'muted small', style: 'margin-top:10px' }, 'Waiting for your answer: write it in the box below.')
               : null,
@@ -297,6 +335,15 @@ function conversationItems(state, detail, ui, actions) {
       case 'dev.implementation':
       case 'dev.correction':
         items.push(agentMessage(state, event, [h('p', null, event.summary), h('ul', { className: 'plan' }, d.files.map((f) => h('li', null, h('span', { className: 'num ac' }, f.change === 'created' ? 'new' : f.change === 'modified' ? 'mod' : '='), h('span', { className: 'mono' }, f.path))))]));
+        break;
+      case 'qa.concern':
+        items.push(agentMessage(state, event, [h('p', { className: 'muted small' }, 'Concern: the requirements may not match your request'), h('p', null, event.summary)]));
+        break;
+      case 'qa.ai-tests':
+        items.push(agentMessage(state, event, h('p', null, event.summary)));
+        break;
+      case 'qa.ai-tests-failed':
+        items.push(note(event));
         break;
       case 'qa.verdict': {
         const defects = defectsByTask[event.taskId] || [];

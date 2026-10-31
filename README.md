@@ -61,10 +61,14 @@ add noise to what is being observed.
   from a **scripted** agent (fixed rules written in this repository) or an
   **AI-powered** one (a Claude model). Scripted behaviour is never presented
   as AI.
-- **Independent verification.** QA is always scripted. It turns the
-  acceptance criteria into deterministic tests and runs them with
-  `node --test`, so the model that wrote the code never grades its own work.
-  A result counts as verified only if QA actually ran the checks.
+- **Independent verification.** QA always turns the acceptance criteria
+  into deterministic tests and runs them with `node --test`, also when QA is
+  AI-powered: no model can talk those checks round, so the model that wrote
+  the code never grades its own work. An AI-powered QA can only **add**
+  tests and defects. A result counts as verified only if QA actually ran the
+  checks.
+- **No guessing.** An AI-powered PO must ask before it decides. Anything it
+  decides on your behalf is written down as such.
 - **Exactly three agents: PO, Developer and QA.** The orchestrator that
   assigns work is infrastructure, not a team member. You, the human, are not
   an agent: you make the product decisions.
@@ -80,9 +84,9 @@ add noise to what is being observed.
 | Member | Kind | Responsibility |
 |---|---|---|
 | **You** | Human | Describe what to build, ask for changes, enable or disable agents, resume or cancel blocked work |
-| **PO** (Product Owner) | Scripted or AI-powered | Turns a request into requirements and machine-checkable acceptance criteria; asks for clarification; applies change requests to the requirements; reviews the verified result |
+| **PO** (Product Owner) | Scripted or AI-powered | Refines your request by asking questions, then writes requirements, assumptions and machine-checkable acceptance criteria; applies change requests to the requirements; reviews the verified result |
 | **Developer** | Scripted or AI-powered | Writes the product files; changes them for change requests; fixes defects reported by QA |
-| **QA** (Quality Assurance) | Always scripted | Generates one test per acceptance criterion, runs all tests, reports results and defects, and re-tests every correction |
+| **QA** (Quality Assurance) | Scripted or AI-powered | Generates one deterministic test per acceptance criterion, runs all tests, reports results and defects, and re-tests every correction. When AI-powered, it also writes tests of its own from your original request and flags requirements that may not match it |
 | Orchestrator | Infrastructure | Assigns each stage to the responsible agent if it is enabled, executes the work, records every step |
 
 ### Scripted or AI-powered
@@ -93,10 +97,29 @@ You choose each agent's **Brain** on the Team page:
   `src/recipes/`, with no AI model. The scripted PO recognises one kind of
   request, a **Hello World web application**, and honestly answers "needs
   clarification" for anything else.
-- **AI-powered** (PO and Developer): the agent's decisions come from a
+- **AI-powered** (any of the three): the agent's decisions come from a
   Claude model through Claude Code. The team can then build anything that
   **runs in a browser from static files** (HTML, CSS and JavaScript, with no
   server and no external resources): from a simple page to a small game.
+
+**The AI-powered PO refines before it writes.** It looks for everything
+your request leaves open (what exactly, scope, texts, look, behaviour and
+rules, controls, start and end, edge cases) and stops to ask: several
+numbered questions at once, each with why it matters and, where useful,
+some options. "Build a game" always gets questions. This is enforced, not
+just asked for: before you have answered anything, a PO answer that
+decides a detail you never gave is refused and the PO has to ask instead.
+When you answer "you decide", the PO may decide, and the requirements list
+every **assumption** with who made it: *from you* or *decided by the PO*.
+
+**The AI-powered QA adds its own tests.** The deterministic checks of the
+PO's criteria always run first. Then QA writes extra tests from **your
+original request and your answers**, not only from the PO's criteria, and
+tells the PO when the requirements may not match what you asked. Its tests
+run with **read-only access to the product folder** (Node's permission
+model: no writing, no processes, no workers) and may only use a short list
+of Node modules. A failing QA test is a defect for the Developer; a QA test
+file that crashes is QA's own problem and never counts against the product.
 
 When the PO is AI-powered, its **final acceptance** is an AI decision too:
 the PO reads the request, the requirements, QA's results and the product
@@ -129,8 +152,8 @@ flowchart TD
 1. **Requirement analysis (PO).** The PO writes `REQUIREMENTS.md` with
    requirements and acceptance criteria. Each criterion has a check that QA
    can test automatically, such as "the page shows the text *hello world*"
-   or "the background colour is green". If the request is unclear or cannot
-   be built, the PO asks you instead of guessing. The request then waits for
+   or "the background colour is green". If anything is open, unclear or
+   cannot be built, the PO asks you instead of guessing. The request then waits for
    your answer: you reply in the same request box ("For" shows **Answer the
    PO's question**), and the PO continues **the same request**, seeing all
    its questions and all your answers. Only the latest request of a product
@@ -138,7 +161,9 @@ flowchart TD
 2. **Implementation (Developer).** The product files are written to disk and
    committed to the product's own Git repository.
 3. **Verification (QA).** QA generates `test/acceptance.test.mjs` from the
-   criteria, runs every test, and reports a verdict with evidence.
+   criteria, runs every test, and reports a verdict with evidence. An
+   AI-powered QA also runs its own tests (`qa/ai-checks.mjs`, read-only) and
+   raises concerns for the PO.
 4. **Correction (Developer).** If tests fail, QA sends the defects back to
    the Developer, and QA verifies the correction again.
 5. **Final review (PO).** The PO accepts or rejects the product:
@@ -159,10 +184,10 @@ resume or cancel it.
 
 | Decision | Scripted mode | AI-powered mode | Safeguard |
 |---|---|---|---|
-| Is the request clear and buildable? | PO matches it against fixed recipes | PO (Claude) | The question goes to you; nothing is guessed |
-| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude) | Every criterion must use a check type QA can test automatically |
+| Is the request clear and buildable? | PO matches it against fixed recipes | PO (Claude), in rounds of questions | Before you answer anything, a PO that decides a detail you never gave is refused and must ask |
+| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude) | Every criterion must use a check type QA can test automatically; every assumption says who decided it |
 | The product files | Developer fills a template | Developer (Claude) | Files are checked before writing: inside the product folder, allowed types, not in `test/`, nothing loaded from the internet |
-| Do the checks pass? | **QA, always scripted** | **QA, always scripted** | Real `node --test` runs; the model never grades its own work |
+| Do the checks pass? | QA runs the deterministic tests | QA runs the same deterministic tests **plus** tests it writes from your request | Real `node --test` runs; the deterministic checks always run; QA's own tests run read-only and can only add defects |
 | Accept or reject | PO by rule: accept only if QA verified everything | PO (Claude), with its reasons | Claude may reject a verified product, but an "accept" without QA verification is refused |
 
 Every AI answer must match the agent's **contract** (a fixed JSON shape
@@ -204,7 +229,7 @@ scripted PO only recognises new Hello World requests, and says so.
 | **Team** | The three agents, with **Enabled/Disabled** (availability) and **Brain** (scripted or AI-powered); the AI provider settings with a real connection test. |
 | **Team Activity** | Every recorded event with its evidence: files with checksums, commands with output and exit codes, test results, defects, commits, AI requests, and configuration changes. |
 | **Repository** | The result: outcome, acceptance criteria with their status, test results, open issues, files read from disk, and Git commits. |
-| **Analytics** | Statistics calculated from the recorded data, with a project filter and a date range. |
+| **Analytics** | Statistics calculated from the recorded data, with a project filter and a date range, including **PO interruptions** and a **Team process** panel: for the PO, how many times it stopped to ask you and how many questions (each one counted, also when asked together), the details you left to it and the verified work it sent back; for the Developer, deliveries, mistakes caught by QA, work sent back by the PO and how often it was right first time; for QA, verifications, defects found (by the acceptance checks and by its own tests), requirement concerns, and problems it passed that the PO then rejected. |
 | **Live Preview** (right column) | The generated page, served by a separate local preview server and shown in the dashboard. |
 
 Details worth knowing:
