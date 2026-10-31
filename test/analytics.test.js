@@ -200,7 +200,7 @@ test('CSV exports contain the recorded data and follow the filters', async (t) =
   assert.match(stats.res.headers.get('content-disposition'), /attachment; filename="ai-scrum-statistics-\d{4}-\d{2}-\d{2}\.csv"/);
   assert.ok(stats.text.startsWith('﻿'), 'Excel reads it as UTF-8');
   assert.equal(rows(stats.text)[0], 'section,metric,value,unit,detail,source,how it is computed');
-  assert.ok(rows(stats.text).some((r) => r.startsWith('KPI,Total workflows,2,count')));
+  assert.ok(rows(stats.text).some((r) => r.startsWith('KPI,Requests,2,count')));
 
   const requests = await get('/api/analytics/export/requests.csv');
   const lines = rows(requests.text);

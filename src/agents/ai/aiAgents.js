@@ -177,7 +177,9 @@ export class AiProductOwnerAgent extends Agent {
       '- If you rejected earlier versions, check whether your reasons were addressed. Do not invent new demands beyond the request and the requirements.',
       '- If QA raised concerns that the requirements may not match the request, weigh them against the request: reject if the product misses what the user asked.',
       qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
-      'Answer with a JSON object only: {"decision":"accept" | "reject","summary":"one or two sentences for the user","reasons":["..."]}',
+      '- For every reason to reject, say where the problem comes from: "requirements" (the agreed requirements missed or misstated what the user asked) or "implementation" (the code does not do what the requirements say).',
+      '- If QA raised concerns, answer each one explicitly: do you agree that the requirements may not match the request, and why.',
+      'Answer with a JSON object only: {"decision":"accept" | "reject","summary":"one or two sentences for the user","reasons":[{"text":"...","origin":"requirements" | "implementation"}],"concernResponses":[{"concern":1,"decision":"agree" | "disagree","reason":"..."}]}',
     ].join('\n');
     const user = JSON.stringify(
       {
@@ -204,10 +206,19 @@ export class AiProductOwnerAgent extends Agent {
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
       user,
-      validate: (reply) => validateReviewReply(reply, { qaPassed }),
+      validate: (reply) => validateReviewReply(reply, { qaPassed, concerns: verification?.concerns ?? [] }),
       purpose: 'review the verified outcome',
     });
-    return { accepted: value.accepted, summary: value.summary, reasons: value.reasons, unmet: evidence.unmet, decidedBy: 'ai', aiCalls };
+    return {
+      accepted: value.accepted,
+      summary: value.summary,
+      reasons: value.reasons,
+      reasonOrigins: value.reasonOrigins,
+      concernResponses: value.concernResponses,
+      unmet: evidence.unmet,
+      decidedBy: 'ai',
+      aiCalls,
+    };
   }
 }
 
@@ -347,7 +358,8 @@ export class AiQaAgent extends Agent {
       '- tests behaviour where the files allow it: plain .js files that export functions for Node can be loaded with createRequire(import.meta.url)("../file.js"); otherwise check the HTML, CSS and scripts as text;',
       '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
       'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
-      'Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>","concerns":["a requirement that may not match the request, and why"]}',
+      'List in "requestOnly" the names of your tests that check something the user asked (in the request or the answers) that the agreed requirements do not state: if such a test fails, the requirements missed it too.',
+      'Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>","requestOnly":["QA-AI: ..."],"concerns":["a requirement that may not match the request, and why"]}',
     ].join('\n');
     const user = JSON.stringify(
       {
@@ -368,19 +380,29 @@ export class AiQaAgent extends Agent {
       extraFiles: [{ path: QA_AI_TEST_FILE, purpose: 'QA (AI) tests written from the original request and the clarification dialogue', content: value.testFile }],
       commands: [...base.commands, { id: 'ai-tests', kind: 'ai-tests', label: 'Run QA (AI) tests with read-only access', args: ['--test-reporter=tap', QA_AI_TEST_FILE] }],
       concerns: value.concerns,
+      requestOnly: value.requestOnly,
       aiCalls,
     };
   }
 
   /** The deterministic verdict, plus a defect for every failing QA (AI) test. */
-  evaluate({ spec, results }) {
+  evaluate({ spec, results, plan = {} }) {
     const base = this.rules.evaluate({ spec, results });
+    const requestOnly = new Set(plan.requestOnly ?? []);
     const run = results.commands.find((c) => c.kind === 'ai-tests');
     const tests = run?.tests ?? [];
     const failed = tests.filter((t) => t.status === 'fail');
     // A test file that crashed is QA's own problem, not a product defect.
     const problem = run && (run.timedOut || (!tests.length && run.exitCode !== 0)) ? (run.stderr || run.stdout).trim().slice(0, 1500) || `exit code ${run.exitCode}` : null;
-    const aiDefects = failed.map((t) => ({ title: `${t.name} failed`, expected: t.expected ?? null, actual: t.actual ?? t.error?.split('\n')[0] ?? null, evidence: t.error, reportedBy: 'QA (AI test)' }));
+    const aiDefects = failed.map((t) => ({
+      title: `${t.name} failed`,
+      expected: t.expected ?? null,
+      actual: t.actual ?? t.error?.split('\n')[0] ?? null,
+      evidence: t.error,
+      reportedBy: 'QA (AI test)',
+      // A test of something the requirements never stated: the requirements missed it as well.
+      origin: requestOnly.has(t.name) ? 'requirements' : 'implementation',
+    }));
     const aiTests = { tests: tests.length, pass: tests.filter((t) => t.status === 'pass').length, fail: failed.length, problem };
     const defects = [...base.defects, ...aiDefects];
     const verdict = base.verdict === 'pass' && !aiDefects.length ? 'pass' : 'fail';

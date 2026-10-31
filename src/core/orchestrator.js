@@ -649,7 +649,7 @@ export class Orchestrator {
     const commands = [];
     for (const command of plan.commands) commands.push(await this.#runNode(ctx, command));
 
-    const evaluation = await agent.evaluate({ spec: state.spec, results: { missingFiles, commands } });
+    const evaluation = await agent.evaluate({ spec: state.spec, results: { missingFiles, commands }, plan });
     if (evaluation.aiTests?.problem) {
       say({
         type: 'qa.ai-tests-failed',
@@ -666,7 +666,8 @@ export class Orchestrator {
       detail: { verdict: evaluation.verdict, criteria: evaluation.criteria, testSummary: evaluation.testSummary },
     });
     for (const defect of evaluation.defects) {
-      say({ type: 'defect.reported', category: 'defect', status: 'failure', summary: defect.title, detail: defect });
+      // Failing the agreed criteria is an implementation problem; QA's own tests say when it is the requirements.
+      say({ type: 'defect.reported', category: 'defect', status: 'failure', summary: defect.title, detail: { origin: 'implementation', ...defect } });
     }
     const commit = await this.#commit(ctx, `QA acceptance tests (attempt ${state.attempt})`);
 
@@ -732,12 +733,19 @@ export class Orchestrator {
       type: 'po.review',
       status: review.accepted ? 'success' : rework ? 'warning' : 'failure',
       summary: review.summary,
-      detail: { unmet: review.unmet, decidedBy: review.decidedBy ?? null, reasons: review.reasons ?? [], rework },
+      detail: {
+        unmet: review.unmet,
+        decidedBy: review.decidedBy ?? null,
+        reasons: review.reasons ?? [],
+        reasonOrigins: review.reasonOrigins ?? [],
+        concernResponses: review.concernResponses ?? [],
+        rework,
+      },
     });
 
     if (rework) {
       const reasons = review.reasons?.length ? review.reasons : [review.summary];
-      const poFeedback = reasons.map((reason) => ({ title: reason, reportedBy: 'PO', detail: review.summary }));
+      const poFeedback = reasons.map((reason, i) => ({ title: reason, reportedBy: 'PO', detail: review.summary, origin: review.reasonOrigins?.[i] ?? null }));
       say({
         type: 'handoff',
         category: 'handoff',
@@ -745,7 +753,7 @@ export class Orchestrator {
         to: 'dev',
         status: 'failure',
         summary: `Not accepted yet: ${review.summary} Please rework the product (attempt ${state.attempt + 1} of ${MAX_IMPLEMENTATION_ATTEMPTS}); QA will verify it again.`,
-        detail: { defects: reasons },
+        detail: { defects: reasons, origins: poFeedback.map((f) => f.origin) },
       });
       return {
         output: { summary: review.summary, accepted: false, rework: true },

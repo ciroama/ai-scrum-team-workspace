@@ -458,7 +458,7 @@ test('the scripted PO matches the answer when the user rephrases the request', a
 });
 
 test('a verified product the AI PO rejects goes back to the Developer with the PO\'s reasons', async (t) => {
-  const reject = { content: { decision: 'reject', summary: 'Not accepted: the phrase is not in the centre of the page.', reasons: ['Centre the phrase on the page'] } };
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: the phrase is not in the centre of the page.', reasons: [{ text: 'Centre the phrase on the page', origin: 'implementation' }] } };
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
@@ -480,7 +480,7 @@ test('a verified product the AI PO rejects goes back to the Developer with the P
 });
 
 test('the AI PO cannot accept what QA did not verify, and a rejection with no attempts left fails', async (t) => {
-  const reject = { content: { decision: 'reject', summary: 'Not accepted: still not centred.', reasons: ['Centre it'] } };
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: still not centred.', reasons: [{ text: 'Centre it', origin: 'implementation' }] } };
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, reject, { content: page('red') }, reject, { content: page('red') }, reject]);
   const { workflow } = await run(app);
   assert.equal(workflow.status, 'failed', 'three implementations, then the limit');
@@ -533,6 +533,9 @@ test('a PO that decides on its own is sent back and asks instead', async (t) => 
   assert.deepEqual(question.detail.questions.map((q) => q.question), ['Which game?', 'How does the game end?']);
   assert.equal(question.detail.round, 1);
   assert.match(workflow.state.clarification.message, /1\. Which game\? \(Breakout \/ Snake\)\n2\. How does the game end\?/);
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.equal(p.po.find((m) => m.key === 'poGuessesStopped').value, 1, 'the guess was stopped and counted');
+  assert.equal(p.po.find((m) => m.key === 'poRefused').value, 1);
 });
 
 // QA (AI) tests as the model would write them.
@@ -572,7 +575,8 @@ test("QA (AI) test failures become defects for the Developer; QA's concerns reac
     `test('QA-AI: the phrase is red', () => {\n  assert.match(readFileSync('style.css', 'utf8'), /p \\{ color: red/);\n});`,
     ['The request says "font red": the requirements only colour the phrase, not all text.'],
   );
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, strict, { content: page('red') }, strict, ACCEPT], { qaMode: 'ai' });
+  const acceptWithAnswer = { content: { ...ACCEPT.content, concernResponses: [{ concern: 1, decision: 'disagree', reason: 'The user asked for the phrase in red; the page has no other text.' }] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, strict, { content: page('red') }, strict, acceptWithAnswer], { qaMode: 'ai' });
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
   const defects = events.filter((e) => e.type === 'defect.reported');
@@ -582,6 +586,15 @@ test("QA (AI) test failures become defects for the Developer; QA's concerns reac
   assert.equal(concern.to, 'po');
   const received = await claude.received();
   assert.deepEqual(JSON.parse(received.at(-1).stdin).qaVerification.qaConcerns, ['The request says "font red": the requirements only colour the phrase, not all text.']);
+  // The PO answered the concern explicitly, and every defect says where it comes from.
+  const review = events.find((e) => e.type === 'po.review');
+  assert.deepEqual(review.detail.concernResponses.map((r) => r.decision), ['disagree']);
+  assert.ok(defects.every((d) => ['implementation', 'requirements'].includes(d.detail.origin)));
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  const poConcerns = p.po.find((m) => m.key === 'poConcerns');
+  assert.equal(poConcerns.value, 0);
+  assert.match(poConcerns.detail, /of 2 answered · 2 dismissed|of 1 answered · 1 dismissed/);
+  assert.ok(p.dev.find((m) => m.key === 'devCodeDefects').value >= 1);
 });
 
 test('AI-written tests cannot write files or start processes, and a broken file never counts against the product', async (t) => {
@@ -615,7 +628,7 @@ test("a QA (AI) test file that crashes is QA's problem: the deterministic checks
 
 test('team process statistics: PO questions one by one, Developer mistakes caught by QA, work sent back by the PO', async (t) => {
   const asks = { content: { status: 'needs_clarification', reason: 'ambiguous', questions: [{ question: 'Which phrase?' }, { question: 'Which colours?' }, { question: 'Centred?' }] } };
-  const reject = { content: { decision: 'reject', summary: 'Not accepted: not centred enough.', reasons: ['Centre it'] } };
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: not centred enough.', reasons: [{ text: 'Centre it', origin: 'implementation' }] } };
   const { app } = await aiApp(t, [asks, { content: PO_SPEC }, { content: page('blue') }, { content: page('red') }, reject, { content: page('red') }, ACCEPT]);
   const { workflow } = await run(app, 'make me a page');
   assert.equal(workflow.status, 'needs_clarification');
@@ -635,4 +648,17 @@ test('team process statistics: PO questions one by one, Developer mistakes caugh
   assert.equal(value(p.qa, 'qaVerifications').value, 3);
   assert.equal(value(p.qa, 'qaDefects').value, 1);
   assert.equal(value(p.qa, 'qaMissed').value, 1);
+});
+
+test('the PO must answer every QA concern and give the origin of every rejection reason', async () => {
+  const { validateReviewReply } = await import('../src/ai/contracts.js');
+  const concerns = ['The score position is not in the requirements.'];
+  assert.throws(() => validateReviewReply({ decision: 'accept', summary: 'ok' }, { qaPassed: true, concerns }), /Answer QA's concern 1/);
+  assert.throws(() => validateReviewReply({ decision: 'reject', summary: 'no', reasons: ['Move the score'] }, { qaPassed: true }), /"origin":"requirements" \| "implementation"/);
+  const ok = validateReviewReply(
+    { decision: 'reject', summary: 'no', reasons: [{ text: 'The score must be top right', origin: 'requirements' }], concernResponses: [{ concern: 1, decision: 'agree', reason: 'The user said top right.' }] },
+    { qaPassed: true, concerns },
+  );
+  assert.deepEqual(ok.reasonOrigins, ['requirements']);
+  assert.deepEqual(ok.concernResponses, [{ concern: concerns[0], decision: 'agree', reason: 'The user said top right.' }]);
 });
