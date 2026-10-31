@@ -229,7 +229,7 @@ scripted PO only recognises new Hello World requests, and says so.
 | **Team** | The three agents, with **Enabled/Disabled** (availability) and **Brain** (scripted or AI-powered); the AI provider settings with a real connection test. |
 | **Team Activity** | Every recorded event with its evidence: files with checksums, commands with output and exit codes, test results, defects, commits, AI requests, and configuration changes. |
 | **Repository** | The result: outcome, acceptance criteria with their status, test results, open issues, files read from disk, and Git commits. |
-| **Analytics** | Statistics calculated from the recorded data, with a project filter and a date range, including **PO interruptions**: how many times the PO stopped to ask you something, how many questions, and how many you answered. |
+| **Analytics** | Statistics calculated from the recorded data, with a project filter and a date range, including **PO interruptions** and a **Team process** panel: for the PO, how many times it stopped to ask you and how many questions (each one counted, also when asked together), the details you left to it and the verified work it sent back; for the Developer, deliveries, mistakes caught by QA, work sent back by the PO and how often it was right first time; for QA, verifications, defects found (by the acceptance checks and by its own tests), requirement concerns, and problems it passed that the PO then rejected. |
 | **Live Preview** (right column) | The generated page, served by a separate local preview server and shown in the dashboard. |
 
 Details worth knowing:

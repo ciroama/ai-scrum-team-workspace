@@ -31,6 +31,9 @@ export function statisticsCsv(source, filter, catalogue) {
   const data = computeAnalytics(source, filter, catalogue);
   const rows = [
     ...data.kpis.map((k) => ({ section: 'KPI', metric: k.label, value: k.value, unit: k.unit, detail: k.detail, source: k.source, basis: k.basis })),
+    ...['po', 'dev', 'qa'].flatMap((agent) =>
+      data.process[agent].map((m) => ({ section: `Team process: ${{ po: 'PO', dev: 'Developer', qa: 'QA' }[agent]}`, metric: m.label, value: m.value, unit: m.unit, detail: m.detail, source: m.source, basis: m.basis })),
+    ),
     ...data.outcomes.map((o) => ({ section: 'Workflow outcome', metric: o.label, value: o.value, unit: 'count', source: 'recorded', basis: 'Current status of each selected workflow.' })),
     ...data.agents.flatMap((a) => [
       { section: `Agent: ${a.label}`, metric: 'Tasks completed', value: a.tasksCompleted, unit: 'count', source: 'recorded' },

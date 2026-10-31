@@ -277,8 +277,47 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
   ];
 
+  // ---- Team process: how each agent worked, compared request by request ----
+  const verdicts = events.filter((e) => e.type === 'qa.verdict');
+  const failedVerdicts = verdicts.filter((e) => e.status !== 'success');
+  const defectsFound = events.filter((e) => e.type === 'defect.reported');
+  const fromOwnTests = defectsFound.filter((e) => e.detail?.reportedBy === 'QA (AI test)');
+  const concerns = events.filter((e) => e.type === 'qa.concern');
+  const reviews = events.filter((e) => e.type === 'po.review');
+  const devTasks = tasks.filter((t) => t.agentId === 'dev' && t.status === 'completed' && (t.stage === 'implementation' || t.stage === 'correction'));
+  const poDecided = sum(events.filter((e) => e.type === 'po.requirements').map((e) => (e.detail?.assumptions ?? []).filter((a) => a.decidedBy === 'po').length));
+  const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
+  const firstTimeRight = verifiedWorkflows.filter((id) => {
+    const first = verdicts.find((e) => e.workflowId === id);
+    return first.status === 'success' && !poRework.some((e) => e.workflowId === id);
+  });
+  const askedIn = new Set(poQuestionRounds.map((e) => e.workflowId)).size;
+  const metric = (key, label, value, detail, source, basis, unit = 'count') => ({ key, label, unit, value: enough ? value : null, detail: enough ? detail : null, source, basis });
+  const process = {
+    po: [
+      metric('poInterruptionsCount', 'Times it stopped to ask you', poQuestionRounds.length, `in ${askedIn} of ${total} request${total === 1 ? '' : 's'}`, SOURCE.recorded, 'Recorded po.clarification events: each one is the PO stopping the work to ask you before writing the requirements.'),
+      metric('poQuestionsCount', 'Questions asked', poQuestions, poQuestionRounds.length ? `${(poQuestions / poQuestionRounds.length).toFixed(1)} per interruption` : null, SOURCE.recorded, 'Every question counts, also when the PO asked several in one message (the questions recorded on each po.clarification event).'),
+      metric('poAnswers', 'Answers it needed from you', answers.length, null, SOURCE.recorded, 'Recorded clarification.answered events.'),
+      metric('poDecided', 'Details you left to the PO', poDecided, null, SOURCE.recorded, 'Assumptions marked "decided by the PO" in the agreed requirements, after you told the PO to decide.'),
+      metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
+    ],
+    dev: [
+      metric('devDeliveries', 'Implementations delivered', devTasks.length, 'first builds and corrections', SOURCE.recorded, 'Completed Developer tasks in the implementation and correction stages.'),
+      metric('devCaughtByQa', 'Caught by QA', failedVerdicts.length, devTasks.length ? `${failedVerdicts.length} of ${devTasks.length} deliveries failed verification` : null, SOURCE.recorded, 'Recorded qa.verdict events with a failing verdict: each one is a delivery in which QA found at least one defect.'),
+      metric('devSentBackByPo', 'Sent back by the PO', poRework.length, null, SOURCE.recorded, 'PO → Developer rework handoffs after QA had verified the delivery.'),
+      metric('devFirstTimeRight', 'Right first time', verifiedWorkflows.length ? firstTimeRight.length / verifiedWorkflows.length : null, verifiedWorkflows.length ? `${firstTimeRight.length} of ${verifiedWorkflows.length} requests` : null, SOURCE.calculated, 'Requests whose first delivery passed QA and was not sent back by the PO, out of the requests QA verified at least once.', 'percent'),
+    ],
+    qa: [
+      metric('qaVerifications', 'Verifications run', verdicts.length, null, SOURCE.recorded, 'Recorded qa.verdict events: one per verification of a delivery.'),
+      metric('qaDefects', 'Defects found', defectsFound.length, `${defectsFound.length - fromOwnTests.length} by the acceptance checks · ${fromOwnTests.length} by its own tests`, SOURCE.recorded, 'Recorded defect.reported events. "Its own tests" are the tests an AI-powered QA wrote from your request.'),
+      metric('qaConcerns', 'Requirement concerns raised', concerns.length, null, SOURCE.recorded, 'Recorded qa.concern events: the requirements may not match your request (AI-powered QA only).'),
+      metric('qaMissed', 'Passed by QA, rejected by the PO', poRework.length, null, SOURCE.recorded, 'Deliveries QA verified that the PO then rejected: problems the tests did not catch, according to the PO.'),
+    ],
+  };
+
   return {
     filter: { projectId, from, to },
+    process,
     projects,
     empty: !enough,
     kpis,

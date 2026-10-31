@@ -139,6 +139,7 @@ export function renderAnalytics(data, ui) {
       ? h('div', { className: 'empty' }, `${NOT_ENOUGH}: no workflows match the selected filters. Statistics appear once workflows have been run.`)
       : null,
     h('div', { className: 'kpi-grid' }, data.kpis.map(kpiCard)),
+    processPanel(data),
     h(
       'div',
       { className: 'chart-grid' },
@@ -148,6 +149,36 @@ export function renderAnalytics(data, ui) {
     ),
     agentTable(data),
     transparency(data),
+  );
+}
+
+/** How each agent worked, side by side: the process, not the product. */
+function processPanel(data) {
+  const column = (title, metrics) =>
+    h(
+      'div',
+      { className: 'process-agent' },
+      h('h3', null, title),
+      h(
+        'dl',
+        null,
+        metrics.map((m) => {
+          const text = formatValue(m);
+          return h(
+            'div',
+            { className: 'process-row', title: m.basis },
+            h('dt', null, h('span', { className: 'process-label' }, m.label), m.detail && text != null ? h('span', { className: 'muted small process-detail' }, m.detail) : null),
+            h('dd', null, h('strong', null, text ?? '—'), sourceBadge(m.source)),
+          );
+        }),
+      ),
+    );
+  return h(
+    'section',
+    { className: 'chart-panel process-panel' },
+    h('div', { className: 'kpi-head' }, h('h2', null, 'Team process'), sourceBadge('recorded')),
+    h('p', { className: 'muted small' }, 'How the PO, the Developer and QA worked: interruptions, mistakes caught and work sent back. Hover a row to see how it is computed.'),
+    h('div', { className: 'process-grid' }, column('PO', data.process.po), column('Developer', data.process.dev), column('QA', data.process.qa)),
   );
 }
 

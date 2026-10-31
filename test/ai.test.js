@@ -612,3 +612,27 @@ test("a QA (AI) test file that crashes is QA's problem: the deterministic checks
   assert.match(warning.error, /QA forgot something/);
   assert.ok(!events.some((e) => e.type === 'defect.reported'));
 });
+
+test('team process statistics: PO questions one by one, Developer mistakes caught by QA, work sent back by the PO', async (t) => {
+  const asks = { content: { status: 'needs_clarification', reason: 'ambiguous', questions: [{ question: 'Which phrase?' }, { question: 'Which colours?' }, { question: 'Centred?' }] } };
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: not centred enough.', reasons: ['Centre it'] } };
+  const { app } = await aiApp(t, [asks, { content: PO_SPEC }, { content: page('blue') }, { content: page('red') }, reject, { content: page('red') }, ACCEPT]);
+  const { workflow } = await run(app, 'make me a page');
+  assert.equal(workflow.status, 'needs_clarification');
+  const done = await app.orchestrator.answer(workflow.id, 'hello world, green and red, centred').done;
+  assert.equal(done.status, 'completed');
+
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  const value = (list, key) => list.find((m) => m.key === key);
+  assert.equal(value(p.po, 'poInterruptionsCount').value, 1, 'one interruption…');
+  assert.equal(value(p.po, 'poQuestionsCount').value, 3, '…with three questions asked at once');
+  assert.equal(value(p.po, 'poAnswers').value, 1);
+  assert.equal(value(p.po, 'poRejected').value, 1);
+  assert.equal(value(p.dev, 'devDeliveries').value, 3, 'first build, QA correction, PO rework');
+  assert.equal(value(p.dev, 'devCaughtByQa').value, 1);
+  assert.equal(value(p.dev, 'devSentBackByPo').value, 1);
+  assert.equal(value(p.dev, 'devFirstTimeRight').value, 0);
+  assert.equal(value(p.qa, 'qaVerifications').value, 3);
+  assert.equal(value(p.qa, 'qaDefects').value, 1);
+  assert.equal(value(p.qa, 'qaMissed').value, 1);
+});
