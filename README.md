@@ -462,10 +462,10 @@ This project was built with [Claude](https://claude.ai) as my development
 partner. Claude wrote the code, the tests and most of the documentation;
 that is why most commits in the history list Claude as the author.
 
-My role was the one I know best: Product Owner. I defined the vision and the
-ground rules, wrote the requirements for each milestone, decided what to
-build next and what to leave out, reviewed every result, and tested the
-dashboard by hand, including the real Claude Code integration.
+My role was on the product side: I conceived the idea, defined the vision
+and the ground rules, wrote the requirements for each milestone, decided
+what to build next and what to leave out, reviewed every result, and tested
+the dashboard by hand, including the real Claude Code integration.
 
 In other words, the project is a small experiment in the same idea it
 studies: a human making the product decisions while AI does much of the
