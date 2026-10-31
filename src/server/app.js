@@ -179,6 +179,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
               requirements: w.state.spec.requirements,
               acceptanceCriteria: w.state.spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
               changes: w.state.spec.changes ?? null,
+              assumptions: w.state.spec.assumptions ?? null,
+              clarifications: w.state.spec.clarifications ?? null,
             }
           : null,
       })),

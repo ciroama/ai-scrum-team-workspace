@@ -392,7 +392,8 @@ export class Repository extends EventEmitter {
       .prepare(
         `SELECT * FROM events
          WHERE workflow_id IS NOT NULL
-           AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call')
+           AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call',
+                        'po.clarification', 'clarification.answered', 'qa.concern')
          ORDER BY id`,
       )
       .all()

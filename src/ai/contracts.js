@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 // Validation of model answers. A model reply is only used when it matches
 // the agent contract exactly; otherwise the agent retries once and then
 // reports the problem. Nothing from a model reply is trusted blindly:
@@ -67,15 +72,38 @@ function validateCheck(check, problems, where) {
 
 /**
  * Validates the PO's reply.
- * @returns {{ status: 'ready', title: string, requirements: string[], acceptanceCriteria: object[], handoffMessage: string, summary: string }
- *         | { status: 'needs_clarification', reason: string, message: string }}
+ *
+ * Refinement rules: questions are structured (what, why it matters, options).
+ * On the first round, before the user has answered anything, the PO may not
+ * decide anything the user did not say: every assumption must come from the
+ * user, and the PO must explain why the request needs no questions.
+ *
+ * @param {object} reply
+ * @param {{ firstRound?: boolean }} [context]
+ * @returns {{ status: 'ready', title: string, requirements: string[], acceptanceCriteria: object[], assumptions: object[], handoffMessage: string, summary: string }
+ *         | { status: 'needs_clarification', reason: string, message: string, questions: object[] }}
  */
-export function validatePoReply(reply) {
+export function validatePoReply(reply, { firstRound = false } = {}) {
   const problems = [];
   if (reply.status === 'needs_clarification') {
-    if (!isText(reply.message)) problems.push('"message" (the question for the user) is required.');
+    const questions = Array.isArray(reply.questions) ? reply.questions : [];
+    if (!questions.length && !isText(reply.message)) problems.push('"questions" (what you need to know from the user) is required.');
+    if (questions.length > 8) problems.push('Ask at most 8 questions at a time.');
+    questions.forEach((q, i) => {
+      if (!isText(q?.question, 500)) problems.push(`questions[${i}]: "question" is required.`);
+      if (q?.options != null && (!Array.isArray(q.options) || !q.options.every((o) => isText(o, 200)))) problems.push(`questions[${i}]: "options" must be a list of short texts.`);
+    });
     if (problems.length) throw new ContractError(problems);
-    return { status: 'needs_clarification', reason: reply.reason === 'unsupported' ? 'unsupported' : 'ambiguous', message: reply.message.trim() };
+    const clean = questions.map((q) => ({
+      question: q.question.trim(),
+      why: isText(q.why, 500) ? q.why.trim() : null,
+      options: Array.isArray(q.options) ? q.options.map((o) => o.trim()) : [],
+    }));
+    const intro = isText(reply.message) ? reply.message.trim() : null;
+    const message = clean.length
+      ? [intro ?? 'Before I write the requirements, I need to know:', ...clean.map((q, i) => `${i + 1}. ${q.question}${q.options.length ? ` (${q.options.join(' / ')})` : ''}`)].join('\n')
+      : intro;
+    return { status: 'needs_clarification', reason: reply.reason === 'unsupported' ? 'unsupported' : 'ambiguous', message, questions: clean };
   }
   if (reply.status !== 'ready') throw new ContractError(['"status" must be "ready" or "needs_clarification".']);
   if (!isText(reply.title, 120)) problems.push('"title" is required (max 120 characters).');
@@ -90,6 +118,23 @@ export function validatePoReply(reply) {
       if (!isText(c?.description, 500)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
       validateCheck(c?.check, problems, `acceptanceCriteria[${i}]`);
     });
+  }
+  if (!Array.isArray(reply.assumptions)) {
+    problems.push('"assumptions" is required: list every detail you rely on that the request does not state word for word, with "decidedBy": "user" or "po" (an empty list if there are none).');
+  } else {
+    reply.assumptions.forEach((a, i) => {
+      if (!isText(a?.text, 500)) problems.push(`assumptions[${i}]: "text" is required.`);
+      if (a?.decidedBy !== 'user' && a?.decidedBy !== 'po') problems.push(`assumptions[${i}]: "decidedBy" must be "user" or "po".`);
+    });
+    if (firstRound) {
+      const decided = reply.assumptions.filter((a) => a?.decidedBy === 'po').map((a) => a.text);
+      if (decided.length) {
+        problems.push(`You decided details the user never gave (${decided.join('; ')}). The user has not answered anything yet: ask instead of deciding (status "needs_clarification").`);
+      }
+      if (!isText(reply.whyNoQuestions, 800)) {
+        problems.push('Before writing requirements without asking anything, explain in "whyNoQuestions" why the request leaves nothing open; if anything is open, ask instead.');
+      }
+    }
   }
   if (problems.length) throw new ContractError(problems);
 
@@ -107,6 +152,8 @@ export function validatePoReply(reply) {
     title: reply.title.trim(),
     requirements: reply.requirements.map((r) => r.trim()),
     acceptanceCriteria,
+    assumptions: reply.assumptions.map((a) => ({ text: a.text.trim(), decidedBy: a.decidedBy })),
+    whyNoQuestions: isText(reply.whyNoQuestions, 800) ? reply.whyNoQuestions.trim() : null,
     summary: isText(reply.summary, 500) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
     changes: Array.isArray(reply.changes) ? reply.changes.filter((c) => isText(c, 500)).map((c) => c.trim()).slice(0, 20) : null,
@@ -169,7 +216,7 @@ export function validateDevReply(reply) {
     else {
       if (seen.has(f.path)) problems.push(`${where}: duplicate path ${f.path}.`);
       seen.add(f.path);
-      if (f.path.startsWith('test/')) problems.push(`${where}: the test/ folder is reserved for QA.`);
+      if (f.path.startsWith('test/') || f.path.startsWith('qa/')) problems.push(`${where}: the test/ and qa/ folders are reserved for QA.`);
       if (!ALLOWED_EXTENSIONS.some((ext) => f.path.toLowerCase().endsWith(ext))) problems.push(`${where}: only ${ALLOWED_EXTENSIONS.join(' ')} files are allowed.`);
     }
     if (typeof f?.content !== 'string') problems.push(`${where}: "content" must be a string.`);
@@ -184,5 +231,56 @@ export function validateDevReply(reply) {
     files: files.map((f) => ({ path: f.path, purpose: isText(f.purpose, 200) ? f.purpose.trim() : 'Product file', content: f.content })),
     summary: isText(reply.summary, 800) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
+  };
+}
+
+/** Where QA's AI-written tests live: outside test/, so `node --test` does not pick them up unprotected. */
+export const QA_AI_TEST_FILE = 'qa/ai-checks.mjs';
+const QA_ALLOWED_MODULES = ['node:test', 'node:assert', 'node:assert/strict', 'node:fs', 'node:path', 'node:vm', 'node:module', 'node:url'];
+
+/** Whether a JavaScript module parses, using Node itself. */
+function syntaxError(source) {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-check-'));
+  try {
+    const file = join(dir, 'check.mjs');
+    writeFileSync(file, source);
+    const run = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 10_000 });
+    return run.status === 0 ? null : (run.stderr || 'syntax error').split('\n').filter(Boolean).slice(0, 4).join(' ');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Validates QA's own tests and concerns. The tests run later with read-only
+ * access to the product folder; this check keeps them to a known set of
+ * modules and makes sure they parse.
+ * @returns {{ testFile: string, tests: number, concerns: string[], summary: string | null }}
+ */
+export function validateQaReply(reply) {
+  const problems = [];
+  const source = reply.testFile;
+  if (typeof source !== 'string' || !source.trim()) problems.push('"testFile" (an ES module using node:test) is required.');
+  else {
+    if (Buffer.byteLength(source) > 100_000) problems.push('"testFile" is larger than 100 KB.');
+    const tests = source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? [];
+    if (!tests.length) problems.push('Name every test "QA-AI: ...", e.g. test(\'QA-AI: the score increases when a brick breaks\', ...).');
+    const modules = [...source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"`])([^'"`]+)\1/g)].map((m) => m[2]);
+    const imported = [...source.matchAll(/^\s*import\s+(['"])([^'"]+)\1/gm)].map((m) => m[2]);
+    const bad = [...modules, ...imported].filter((m) => !QA_ALLOWED_MODULES.includes(m) && !/^\.{1,2}\//.test(m));
+    if (bad.length) problems.push(`Only these modules may be used: ${QA_ALLOWED_MODULES.join(', ')}, or product files by relative path. Not allowed: ${[...new Set(bad)].join(', ')}.`);
+    if (/\b(fetch|XMLHttpRequest|WebSocket|process\.binding|process\.dlopen)\b/.test(source)) problems.push('No network access or native bindings in tests.');
+    if (!problems.length) {
+      const error = syntaxError(source);
+      if (error) problems.push(`The test file does not parse: ${error}`);
+    }
+  }
+  if (reply.concerns != null && (!Array.isArray(reply.concerns) || !reply.concerns.every((c) => isText(c, 600)))) problems.push('"concerns" must be a list of short texts.');
+  if (problems.length) throw new ContractError(problems);
+  return {
+    testFile: source,
+    tests: (source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? []).length,
+    concerns: (reply.concerns ?? []).map((c) => c.trim()).slice(0, 10),
+    summary: isText(reply.summary, 600) ? reply.summary.trim() : null,
   };
 }

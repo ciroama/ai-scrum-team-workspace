@@ -318,6 +318,7 @@ function evidenceFor(event, state) {
         d.stderr ? h('pre', { className: 'output' }, d.stderr) : null,
       ];
     case 'test.results':
+    case 'qa.ai-tests':
       return testTable(d.tests);
     case 'qa.verdict':
       return criteriaList(d.criteria);

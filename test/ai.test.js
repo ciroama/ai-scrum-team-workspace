@@ -75,6 +75,8 @@ const PO_SPEC = {
     { description: 'The phrase is centred on the page.', check: { type: 'centeredLayout' } },
   ],
   handoffMessage: 'Build the page so that each criterion passes.',
+  assumptions: [{ text: 'The phrase is exactly "hello world", in lower case.', decidedBy: 'user' }],
+  whyNoQuestions: 'The request names the colours, the phrase and its position; nothing else is asked for.',
 };
 
 const page = (color) => ({
@@ -95,12 +97,13 @@ const ACCEPT = { content: { decision: 'accept', summary: 'Accepted: the page doe
 
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-async function aiApp(t, replies, { devMode = 'ai' } = {}) {
+async function aiApp(t, replies, { devMode = 'ai', qaMode = 'scripted' } = {}) {
   const claude = await fakeClaude(t, replies);
   const app = await startServer({ port: 0, dataDir: await tempDir(t), claudeBinary: claude.binary });
   t.after(() => app.close());
   await fetch(`${app.url}/api/agents/po`, json('PUT', { mode: 'ai' }));
   if (devMode === 'ai') await fetch(`${app.url}/api/agents/dev`, json('PUT', { mode: 'ai' }));
+  if (qaMode === 'ai') await fetch(`${app.url}/api/agents/qa`, json('PUT', { mode: 'ai' }));
   return { app, claude };
 }
 
@@ -260,16 +263,14 @@ test('an old GitHub Models token is removed from the database on start', async (
   assert.equal(second.repository.getSetting('ai.githubModels.token'), null);
 });
 
-test('modes: QA cannot be switched to AI, and mode changes are recorded', async (t) => {
-  const { app } = await aiApp(t, []);
-  const res = await fetch(`${app.url}/api/agents/qa`, json('PUT', { mode: 'ai' }));
-  assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /always scripted/);
+test('modes: every agent can be scripted or AI-powered, and mode changes are recorded', async (t) => {
+  const { app } = await aiApp(t, [], { qaMode: 'ai' });
+  assert.equal((await fetch(`${app.url}/api/agents/qa`, json('PUT', { mode: 'robot' }))).status, 400);
   const events = app.repository.listWorkspaceEvents().filter((e) => e.type === 'agent.mode');
-  assert.deepEqual(events.map((e) => e.detail.agentId), ['po', 'dev']);
+  assert.deepEqual(events.map((e) => e.detail.agentId), ['po', 'dev', 'qa']);
   assert.match(events[0].summary, /PO switched to AI-powered \(Claude Code, sonnet\)/);
   const state = await (await fetch(`${app.url}/api/state`)).json();
-  assert.deepEqual(state.agents.map((a) => `${a.id}:${a.mode}:${a.kind}`), ['po:ai:ai', 'dev:ai:ai', 'qa:scripted:scripted']);
+  assert.deepEqual(state.agents.map((a) => `${a.id}:${a.mode}:${a.kind}:${a.supportsAi}`), ['po:ai:ai:true', 'dev:ai:ai:true', 'qa:ai:ai:true']);
 });
 
 test('the connection test reports the real outcome', async (t) => {
@@ -310,7 +311,7 @@ test('client errors are classified; JSON replies are parsed strictly', async (t)
 
 test('contracts reject unsafe or unverifiable model output', () => {
   assert.throws(() => validatePoReply({ status: 'ready', title: 't', requirements: ['r'], acceptanceCriteria: [{ description: 'd', check: { type: 'eval', code: 'x' } }] }), /unknown check type/);
-  const ok = validatePoReply({ status: 'ready', title: 't', requirements: ['r'], acceptanceCriteria: [{ description: 'd', check: { type: 'centeredLayout' } }] });
+  const ok = validatePoReply({ status: 'ready', title: 't', requirements: ['r'], acceptanceCriteria: [{ description: 'd', check: { type: 'centeredLayout' } }], assumptions: [] });
   assert.equal(ok.acceptanceCriteria.at(-1).check.path, 'index.html', 'entry page criterion added');
 
   const file = (path, content = 'x') => ({ files: [{ path: 'index.html', content: '<p>hi</p>' }, { path, content }] });
@@ -496,4 +497,118 @@ test('the AI PO cannot accept what QA did not verify, and a rejection with no at
   const received = await claude.received();
   assert.match(received.at(-1).stdin, /the only allowed decision is "reject"/);
   assert.match(option(received.at(-2).args, '--system-prompt'), /QA did NOT verify every acceptance criterion: you must reject/);
+});
+
+test('the PO must ask before deciding: refinement rules in the contract', () => {
+  const ready = (extra) => ({ status: 'ready', title: 'Game', requirements: ['r'], acceptanceCriteria: [{ description: 'd', check: { type: 'centeredLayout' } }], ...extra });
+  // No assumptions list at all: refused.
+  assert.throws(() => validatePoReply(ready({})), /"assumptions" is required/);
+  // First round: deciding something the user never said is refused; so is skipping the questions without a reason.
+  assert.throws(() => validatePoReply(ready({ assumptions: [{ text: 'Breakout with 5 rows', decidedBy: 'po' }], whyNoQuestions: 'x' }), { firstRound: true }), /ask instead of deciding/);
+  assert.throws(() => validatePoReply(ready({ assumptions: [] }), { firstRound: true }), /whyNoQuestions/);
+  assert.equal(validatePoReply(ready({ assumptions: [], whyNoQuestions: 'Everything is specified.' }), { firstRound: true }).status, 'ready');
+  // After the user answered ("you decide"), the PO may decide, and it is recorded as such.
+  const later = validatePoReply(ready({ assumptions: [{ text: 'Breakout with 5 rows', decidedBy: 'po' }] }), { firstRound: false });
+  assert.deepEqual(later.assumptions, [{ text: 'Breakout with 5 rows', decidedBy: 'po' }]);
+
+  // Questions are structured and numbered for the user.
+  const asked = validatePoReply({
+    status: 'needs_clarification',
+    questions: [{ question: 'Which game?', why: 'It decides everything else', options: ['Breakout', 'Snake'] }, { question: 'Keyboard or mouse?' }],
+  });
+  assert.equal(asked.questions.length, 2);
+  assert.equal(asked.message, 'Before I write the requirements, I need to know:\n1. Which game? (Breakout / Snake)\n2. Keyboard or mouse?');
+  assert.throws(() => validatePoReply({ status: 'needs_clarification', questions: [] }), /"questions"/);
+});
+
+test('a PO that decides on its own is sent back and asks instead', async (t) => {
+  const guessed = { content: { ...PO_SPEC, assumptions: [{ text: 'A Breakout clone with 5 rows of bricks', decidedBy: 'po' }] } };
+  const asks = { content: { status: 'needs_clarification', reason: 'ambiguous', questions: [{ question: 'Which game?', why: 'Rules and controls depend on it', options: ['Breakout', 'Snake'] }, { question: 'How does the game end?' }] } };
+  const { app, claude } = await aiApp(t, [guessed, asks]);
+  const { workflow, events } = await run(app, 'build a game');
+  assert.equal(workflow.status, 'needs_clarification');
+  const received = await claude.received();
+  assert.match(received[1].stdin, /ask instead of deciding/);
+  const question = events.find((e) => e.type === 'po.clarification');
+  assert.deepEqual(question.detail.questions.map((q) => q.question), ['Which game?', 'How does the game end?']);
+  assert.equal(question.detail.round, 1);
+  assert.match(workflow.state.clarification.message, /1\. Which game\? \(Breakout \/ Snake\)\n2\. How does the game end\?/);
+});
+
+// QA (AI) tests as the model would write them.
+const qaTests = (body, concerns = []) => ({
+  content: {
+    summary: 'Checks the phrase and colours from the request.',
+    concerns,
+    testFile: `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\n${body}\n`,
+  },
+});
+const PASSING_QA = qaTests(`test('QA-AI: the page says hello world', () => {\n  assert.match(readFileSync('index.html', 'utf8'), /hello world/);\n});`);
+
+test('an AI-powered QA runs the deterministic checks and its own tests, read-only', async (t) => {
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, PASSING_QA, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed');
+  assert.equal(workflow.verified, true);
+
+  // QA's request carried the user's own words, the dialogue and the product files.
+  const received = await claude.received();
+  const qaInput = JSON.parse(received[2].stdin);
+  assert.match(qaInput.request, /background green and font red/);
+  assert.ok(qaInput.files.some((f) => f.path === 'style.css'));
+  assert.ok(!qaInput.files.some((f) => f.path.startsWith('test/') || f.path.startsWith('qa/')));
+
+  // Both suites really ran; the AI tests under the permission model.
+  assert.equal(events.find((e) => e.type === 'test.results').detail.summary.pass, 5, 'the deterministic acceptance tests');
+  assert.equal(events.find((e) => e.type === 'qa.ai-tests').detail.summary.pass, 1);
+  const command = events.find((e) => e.type === 'command.started' && e.detail.command.includes('ai-checks'));
+  assert.match(command.detail.command, /^node --permission --allow-fs-read=\S+ --test-reporter=tap qa\/ai-checks\.mjs$/);
+  assert.equal(events.find((e) => e.type === 'qa.verdict').actorKind, 'ai');
+  assert.equal(workflow.state.verification.aiTests.pass, 1);
+});
+
+test("QA (AI) test failures become defects for the Developer; QA's concerns reach the PO", async (t) => {
+  const strict = qaTests(
+    `test('QA-AI: the phrase is red', () => {\n  assert.match(readFileSync('style.css', 'utf8'), /p \\{ color: red/);\n});`,
+    ['The request says "font red": the requirements only colour the phrase, not all text.'],
+  );
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('blue') }, strict, { content: page('red') }, strict, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed');
+  const defects = events.filter((e) => e.type === 'defect.reported');
+  assert.ok(defects.some((d) => d.detail.reportedBy === 'QA (AI test)' && /QA-AI: the phrase is red failed/.test(d.summary)));
+  const concern = events.find((e) => e.type === 'qa.concern');
+  assert.equal(concern.from, 'qa');
+  assert.equal(concern.to, 'po');
+  const received = await claude.received();
+  assert.deepEqual(JSON.parse(received.at(-1).stdin).qaVerification.qaConcerns, ['The request says "font red": the requirements only colour the phrase, not all text.']);
+});
+
+test('AI-written tests cannot write files or start processes, and a broken file never counts against the product', async (t) => {
+  const escape = qaTests(`import { writeFileSync } from 'node:fs';\ntest('QA-AI: tries to write', () => {\n  writeFileSync('owned.txt', 'x');\n});`);
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, escape, { content: page('red') }, PASSING_QA, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  // The write was refused by Node: the test failed, nothing was written.
+  const ai = events.find((e) => e.type === 'qa.ai-tests');
+  assert.equal(ai.detail.summary.fail, 1);
+  assert.match(ai.detail.tests[0].error, /ERR_ACCESS_DENIED|Access to this API has been restricted/);
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync(join(app.orchestrator.productDir(workflow.id), 'owned.txt')), false);
+  assert.equal(workflow.status, 'completed', 'the next round passed');
+
+  // Disallowed modules are refused before anything runs.
+  const { validateQaReply } = await import('../src/ai/contracts.js');
+  assert.throws(() => validateQaReply({ testFile: "import { exec } from 'node:child_process';\ntest('QA-AI: x', () => {});" }), /Not allowed: node:child_process/);
+  assert.throws(() => validateQaReply({ testFile: "test('QA-AI: x', () => { fetch('http://x') });" }), /network/);
+  assert.throws(() => validateQaReply({ testFile: "test('QA-AI: x', () => { if ( });" }), /does not parse/);
+});
+
+test("a QA (AI) test file that crashes is QA's problem: the deterministic checks decide", async (t) => {
+  const broken = qaTests(`throw new Error('QA forgot something');\ntest('QA-AI: never runs', () => {});`);
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, broken, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed', 'not blamed on the Developer');
+  const warning = events.find((e) => e.type === 'qa.ai-tests-failed');
+  assert.match(warning.error, /QA forgot something/);
+  assert.ok(!events.some((e) => e.type === 'defect.reported'));
 });

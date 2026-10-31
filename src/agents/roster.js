@@ -1,11 +1,11 @@
 import { createTeam } from './team.js';
-import { AiDeveloperAgent, AiProductOwnerAgent } from './ai/aiAgents.js';
+import { AiDeveloperAgent, AiProductOwnerAgent, AiQaAgent } from './ai/aiAgents.js';
 
 /**
  * The team as seen by the orchestrator. For each role it returns the agent
- * that matches the configured mode: the scripted agent, or the AI-powered
- * one where it exists (PO and Developer). QA is always scripted so that
- * verification stays independent of the model that wrote the code.
+ * that matches the configured mode: the scripted agent or the AI-powered one.
+ * An AI-powered QA still runs the deterministic checks, so verification never
+ * depends only on a model.
  *
  * Offers the Map methods the orchestrator and read models use.
  */
@@ -22,6 +22,7 @@ export class TeamRoster {
     this.ai = new Map([
       ['po', new AiProductOwnerAgent({ getClient })],
       ['dev', new AiDeveloperAgent({ getClient })],
+      ['qa', new AiQaAgent({ getClient })],
     ]);
   }
 

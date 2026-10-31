@@ -117,6 +117,10 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const blocks = allBlocks.filter((e) => !e.detail?.cause || e.detail.cause === 'agent_disabled');
   const otherBlocks = allBlocks.filter((e) => e.detail?.cause && e.detail.cause !== 'agent_disabled');
   const aiCalls = events.filter((e) => e.type === 'ai.call');
+  // The PO stopping to ask you something: one event per round of questions.
+  const poQuestionRounds = events.filter((e) => e.type === 'po.clarification');
+  const poQuestions = sum(poQuestionRounds.map((e) => e.detail?.questions?.length || 1));
+  const answers = events.filter((e) => e.type === 'clarification.answered');
   const blockedPeriods = allBlocks.map((block) => {
     const end = events.find((e) => e.workflowId === block.workflowId && e.id > block.id && (e.type === 'workflow.resumed' || e.type === 'workflow.cancelled'));
     return { agentId: block.detail?.agentId ?? null, ms: end ? durationMs(block.ts, end.ts) : null };
@@ -250,6 +254,17 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       basis: 'Recorded workflow.blocked events caused by the AI service being unavailable (not installed, not logged in, usage limit, timeout, unusable answer) or by a configuration mismatch.',
     },
     {
+      key: 'poInterruptions',
+      label: 'PO interruptions',
+      unit: 'count',
+      value: enough ? poQuestionRounds.length : null,
+      detail: enough
+        ? `${poQuestions} question${poQuestions === 1 ? '' : 's'} · in ${new Set(poQuestionRounds.map((e) => e.workflowId)).size} of ${total} requests · ${answers.length} answered`
+        : null,
+      source: SOURCE.recorded,
+      basis: 'Recorded po.clarification events: each time the PO stopped and asked you before writing the requirements, because something was missing, unclear or not buildable. Questions are counted one by one when the PO asked several at once; answers are your recorded clarification.answered events.',
+    },
+    {
       key: 'aiCalls',
       label: 'AI requests',
       unit: 'count',
@@ -258,7 +273,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
         ? `${aiCalls.filter((c) => c.status === 'success').length} succeeded · ${sum(aiCalls.map((c) => (c.detail?.usage?.promptTokens ?? 0) + (c.detail?.usage?.completionTokens ?? 0)))} tokens`
         : null,
       source: SOURCE.recorded,
-      basis: 'Recorded ai.call events: every request the AI-powered PO or Developer sent to Claude Code, with its real outcome and token usage as reported by Claude Code.',
+      basis: 'Recorded ai.call events: every request an AI-powered agent (PO, Developer or QA) sent to Claude Code, with its real outcome and token usage as reported by Claude Code.',
     },
   ];
 
