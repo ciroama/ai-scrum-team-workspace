@@ -2798,3 +2798,63 @@ p.kpi-empty {
   gap: 4px;
   font-size: var(--fs-lg);
 }
+
+/* ---- Analytics sections ---------------------------------------------------------- */
+
+.an-section {
+  margin-bottom: var(--s6);
+}
+
+.an-section > h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.an-section > p {
+  margin: 2px 0 var(--s3);
+}
+
+.an-section .kpi-grid {
+  margin-bottom: var(--s3);
+}
+
+.an-section .process-panel {
+  margin-top: 0;
+}
+
+.an-details {
+  margin-top: var(--s4);
+  border-top: 1px solid var(--border);
+  padding-top: var(--s3);
+}
+
+.an-details > summary {
+  cursor: pointer;
+  color: var(--text-soft);
+  font-weight: 600;
+  padding: var(--s2) 0;
+}
+
+.an-details[open] > summary {
+  margin-bottom: var(--s3);
+}
+
+.an-details > * + * {
+  margin-top: var(--s4);
+}
+
+.kpi-grid.kpi-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 1500px) {
+  .kpi-grid.kpi-grid-2 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .kpi-grid.kpi-grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

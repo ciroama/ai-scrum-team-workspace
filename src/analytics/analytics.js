@@ -150,7 +150,8 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const kpis = [
     {
       key: 'total',
-      label: 'Total workflows',
+      group: 'overview',
+      label: 'Requests',
       unit: 'count',
       value: enough ? total : null,
       source: SOURCE.recorded,
@@ -158,6 +159,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'completed',
+      group: 'overview',
       label: 'Completed & verified',
       unit: 'count',
       value: enough ? verified.length : null,
@@ -167,6 +169,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'failed',
+      group: 'overview',
       label: 'Failed',
       unit: 'count',
       value: enough ? failed.length : null,
@@ -175,6 +178,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'blocked',
+      group: 'flow',
       label: 'Blocked now',
       unit: 'count',
       value: enough ? byStatus('blocked').length : null,
@@ -183,6 +187,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'successRate',
+      group: 'overview',
       label: 'Success rate',
       unit: 'percent',
       value: decided ? verified.length / decided : null,
@@ -192,6 +197,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'completionTime',
+      group: 'overview',
       label: 'Average completion time',
       unit: 'duration',
       value: mean(completionTimes),
@@ -201,6 +207,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'testsPassed',
+      group: 'quality',
       label: 'Tests passed',
       unit: 'count',
       value: testRuns.length ? testSum('pass', testRuns) : null,
@@ -210,6 +217,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'testsFailed',
+      group: 'quality',
       label: 'Tests failed',
       unit: 'count',
       value: testRuns.length ? testSum('fail', testRuns) : null,
@@ -219,6 +227,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'corrections',
+      group: 'quality',
       label: 'Correction cycles',
       unit: 'count',
       value: testRuns.length ? feedback.length : null,
@@ -228,6 +237,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'blocks',
+      group: 'flow',
       label: 'Blocks by disabled agents',
       unit: 'count',
       value: enough ? blocks.length : null,
@@ -237,6 +247,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'blockedTime',
+      group: 'flow',
       label: 'Average time blocked',
       unit: 'duration',
       value: mean(closedPeriods),
@@ -246,6 +257,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'otherBlocks',
+      group: 'flow',
       label: 'Blocks: AI or configuration',
       unit: 'count',
       value: enough ? otherBlocks.length : null,
@@ -255,6 +267,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'poInterruptions',
+      group: 'process',
       label: 'PO interruptions',
       unit: 'count',
       value: enough ? poQuestionRounds.length : null,
@@ -266,6 +279,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     },
     {
       key: 'aiCalls',
+      group: 'overview',
       label: 'AI requests',
       unit: 'count',
       value: enough ? aiCalls.length : null,
@@ -292,6 +306,15 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     return first.status === 'success' && !poRework.some((e) => e.workflowId === id);
   });
   const askedIn = new Set(poQuestionRounds.map((e) => e.workflowId)).size;
+  // Where problems came from: the requirements (PO) or the code (Developer).
+  const reworkOrigins = poRework.flatMap((e) => e.detail?.origins ?? []);
+  const fromRequirements = defectsFound.filter((e) => e.detail?.origin === 'requirements').length + reworkOrigins.filter((o) => o === 'requirements').length;
+  const fromCode = defectsFound.filter((e) => e.detail?.origin !== 'requirements').length + reworkOrigins.filter((o) => o === 'implementation').length;
+  // AI answers an agent's contract refused (the agent had to answer again).
+  const refused = (agentId) => aiCalls.filter((e) => e.actor === agentId && e.status !== 'success' && /^Answer rejected/.test(e.detail?.error ?? '')).length;
+  const guessesStopped = aiCalls.filter((e) => e.actor === 'po' && /ask instead of deciding|whyNoQuestions/.test(e.detail?.error ?? '')).length;
+  const concernAnswers = reviews.flatMap((e) => e.detail?.concernResponses ?? []);
+  const refusedBasis = (who) => `AI requests of the ${who} whose answer broke its contract and was sent back (recorded ai.call events "Answer rejected"); the ${who} then had to answer again.`;
   const metric = (key, label, value, detail, source, basis, unit = 'count') => ({ key, label, unit, value: enough ? value : null, detail: enough ? detail : null, source, basis });
   const process = {
     po: [
@@ -299,19 +322,26 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poQuestionsCount', 'Questions asked', poQuestions, poQuestionRounds.length ? `${(poQuestions / poQuestionRounds.length).toFixed(1)} per interruption` : null, SOURCE.recorded, 'Every question counts, also when the PO asked several in one message (the questions recorded on each po.clarification event).'),
       metric('poAnswers', 'Answers it needed from you', answers.length, null, SOURCE.recorded, 'Recorded clarification.answered events.'),
       metric('poDecided', 'Details you left to the PO', poDecided, null, SOURCE.recorded, 'Assumptions marked "decided by the PO" in the agreed requirements, after you told the PO to decide.'),
+      metric('poGuessesStopped', 'Guesses stopped', guessesStopped, 'it decided something you never said and had to ask instead', SOURCE.recorded, 'PO answers refused because, before you had answered anything, they decided a detail you never gave (or skipped the questions without a reason). The PO then had to ask.'),
+      metric('poRequirementGaps', 'Requirement gaps found later', fromRequirements, 'by QA\'s own tests or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the requirements: failing QA tests of things you asked that the requirements never stated, and PO rejection reasons marked "requirements".'),
+      metric('poConcerns', 'QA concerns it agreed with', concernAnswers.filter((r) => r.decision === 'agree').length, concernAnswers.length ? `of ${concernAnswers.length} answered · ${concernAnswers.filter((r) => r.decision === 'disagree').length} dismissed` : null, SOURCE.recorded, 'The PO\'s explicit answer to each concern QA raised, recorded with its final review.'),
       metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
+      metric('poRefused', 'AI answers refused by its rules', refused('po'), null, SOURCE.recorded, refusedBasis('PO')),
     ],
     dev: [
       metric('devDeliveries', 'Implementations delivered', devTasks.length, 'first builds and corrections', SOURCE.recorded, 'Completed Developer tasks in the implementation and correction stages.'),
       metric('devCaughtByQa', 'Caught by QA', failedVerdicts.length, devTasks.length ? `${failedVerdicts.length} of ${devTasks.length} deliveries failed verification` : null, SOURCE.recorded, 'Recorded qa.verdict events with a failing verdict: each one is a delivery in which QA found at least one defect.'),
       metric('devSentBackByPo', 'Sent back by the PO', poRework.length, null, SOURCE.recorded, 'PO → Developer rework handoffs after QA had verified the delivery.'),
+      metric('devCodeDefects', 'Code defects found', fromCode, 'by QA or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the implementation: failed acceptance checks, failing QA tests of things the requirements state, and PO rejection reasons marked "implementation".'),
+      metric('devRefused', 'AI answers refused by its rules', refused('dev'), null, SOURCE.recorded, refusedBasis('Developer')),
       metric('devFirstTimeRight', 'Right first time', verifiedWorkflows.length ? firstTimeRight.length / verifiedWorkflows.length : null, verifiedWorkflows.length ? `${firstTimeRight.length} of ${verifiedWorkflows.length} requests` : null, SOURCE.calculated, 'Requests whose first delivery passed QA and was not sent back by the PO, out of the requests QA verified at least once.', 'percent'),
     ],
     qa: [
       metric('qaVerifications', 'Verifications run', verdicts.length, null, SOURCE.recorded, 'Recorded qa.verdict events: one per verification of a delivery.'),
-      metric('qaDefects', 'Defects found', defectsFound.length, `${defectsFound.length - fromOwnTests.length} by the acceptance checks · ${fromOwnTests.length} by its own tests`, SOURCE.recorded, 'Recorded defect.reported events. "Its own tests" are the tests an AI-powered QA wrote from your request.'),
+      metric('qaDefects', 'Defects found', defectsFound.length, `${defectsFound.length - fromOwnTests.length} by the acceptance checks · ${fromOwnTests.length} by its own tests · ${defectsFound.filter((e) => e.detail?.origin === 'requirements').length} in the requirements`, SOURCE.recorded, 'Recorded defect.reported events. "Its own tests" are the tests an AI-powered QA wrote from your request.'),
       metric('qaConcerns', 'Requirement concerns raised', concerns.length, null, SOURCE.recorded, 'Recorded qa.concern events: the requirements may not match your request (AI-powered QA only).'),
       metric('qaMissed', 'Passed by QA, rejected by the PO', poRework.length, null, SOURCE.recorded, 'Deliveries QA verified that the PO then rejected: problems the tests did not catch, according to the PO.'),
+      metric('qaRefused', 'AI answers refused by its rules', refused('qa'), null, SOURCE.recorded, refusedBasis('QA')),
     ],
   };
 

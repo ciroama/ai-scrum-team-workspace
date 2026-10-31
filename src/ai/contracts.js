@@ -185,18 +185,44 @@ function normaliseCheck(check) {
  * @param {{ qaPassed: boolean }} context
  * @returns {{ accepted: boolean, summary: string, reasons: string[] }}
  */
-export function validateReviewReply(reply, { qaPassed }) {
+export function validateReviewReply(reply, { qaPassed, concerns = [] }) {
   const problems = [];
   if (reply.decision !== 'accept' && reply.decision !== 'reject') problems.push('"decision" must be "accept" or "reject".');
   if (!isText(reply.summary, 800)) problems.push('"summary" (one or two sentences for the user) is required.');
   if (reply.decision === 'accept' && !qaPassed) problems.push('QA did not verify every acceptance criterion, so the only allowed decision is "reject".');
+  // Reasons are texts, or { text, origin } saying whether the problem comes from the requirements or the implementation.
+  const reasons = (Array.isArray(reply.reasons) ? reply.reasons : [])
+    .map((r) => (typeof r === 'string' ? { text: r, origin: null } : { text: r?.text, origin: ORIGINS.includes(r?.origin) ? r.origin : null }))
+    .filter((r) => isText(r.text, 500))
+    .slice(0, 10);
+  if (reply.decision === 'reject' && reasons.some((r) => !r.origin)) {
+    problems.push('Give every reason as {"text":"...","origin":"requirements" | "implementation"}: "requirements" when the requirements missed or misstated what the user asked, "implementation" when the code does not do what the requirements say.');
+  }
+  // Every concern QA raised needs an explicit answer.
+  const responses = Array.isArray(reply.concernResponses) ? reply.concernResponses : [];
+  if (concerns.length) {
+    concerns.forEach((concern, i) => {
+      const r = responses.find((x) => Number(x?.concern) === i + 1);
+      if (!r || (r.decision !== 'agree' && r.decision !== 'disagree') || !isText(r.reason, 500)) {
+        problems.push(`Answer QA's concern ${i + 1} ("${concern}") in "concernResponses": {"concern":${i + 1},"decision":"agree" | "disagree","reason":"..."}.`);
+      }
+    });
+  }
   if (problems.length) throw new ContractError(problems);
   return {
     accepted: reply.decision === 'accept',
     summary: reply.summary.trim(),
-    reasons: Array.isArray(reply.reasons) ? reply.reasons.filter((r) => isText(r, 500)).map((r) => r.trim()).slice(0, 10) : [],
+    reasons: reasons.map((r) => r.text.trim()),
+    reasonOrigins: reasons.map((r) => r.origin),
+    concernResponses: concerns.map((concern, i) => {
+      const r = responses.find((x) => Number(x?.concern) === i + 1);
+      return { concern, decision: r.decision, reason: r.reason.trim() };
+    }),
   };
 }
+
+/** Where a problem comes from: the requirements (PO) or the implementation (Developer). */
+export const ORIGINS = ['requirements', 'implementation'];
 
 /**
  * Validates the Developer's reply.
@@ -276,8 +302,12 @@ export function validateQaReply(reply) {
     }
   }
   if (reply.concerns != null && (!Array.isArray(reply.concerns) || !reply.concerns.every((c) => isText(c, 600)))) problems.push('"concerns" must be a list of short texts.');
+  if (reply.requestOnly != null && (!Array.isArray(reply.requestOnly) || !reply.requestOnly.every((n) => typeof n === 'string' && n.startsWith('QA-AI: ')))) {
+    problems.push('"requestOnly" must list the names ("QA-AI: ...") of the tests that check something the user asked but the requirements do not state.');
+  }
   if (problems.length) throw new ContractError(problems);
   return {
+    requestOnly: (reply.requestOnly ?? []).map((n) => n.trim()),
     testFile: source,
     tests: (source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? []).length,
     concerns: (reply.concerns ?? []).map((c) => c.trim()).slice(0, 10),

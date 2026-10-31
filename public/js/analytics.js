@@ -138,18 +138,36 @@ export function renderAnalytics(data, ui) {
     data.empty
       ? h('div', { className: 'empty' }, `${NOT_ENOUGH}: no workflows match the selected filters. Statistics appear once workflows have been run.`)
       : null,
-    h('div', { className: 'kpi-grid' }, data.kpis.map(kpiCard)),
-    processPanel(data),
-    h(
-      'div',
-      { className: 'chart-grid' },
-      chartPanel('Workflow outcomes', 'recorded', 'Current status of each selected workflow.', outcomesChart(data)),
-      chartPanel('Agent activity', 'recorded', 'Tasks completed by each agent, from the tasks table.', agentChart(data)),
-      chartPanel('Workflows submitted per day', 'recorded', 'Grouped by the local date each workflow was submitted.', dailyChart(data)),
+    section('Overview', 'Your requests and how they ended.', h('div', { className: 'kpi-grid' }, group(data, 'overview').map(kpiCard))),
+    section('How the team worked', 'The PO, the Developer and QA side by side: interruptions, mistakes caught and work sent back. Every value is recorded unless marked Calculated; hover a row to see how it is computed.', processPanel(data)),
+    section('Quality', 'Tests QA ran and work sent back for correction.', h('div', { className: 'kpi-grid' }, group(data, 'quality').map(kpiCard))),
+    section(
+      'Flow and blocks',
+      'Where the requests are now, when they were submitted, and what stopped them.',
+      h('div', { className: 'kpi-grid kpi-grid-2' }, group(data, 'flow').map(kpiCard)),
+      h(
+        'div',
+        { className: 'chart-grid' },
+        chartPanel('Request outcomes', 'recorded', 'Current status of each selected request.', outcomesChart(data)),
+        chartPanel('Requests submitted per day', 'recorded', 'Grouped by the local date each request was submitted.', dailyChart(data)),
+      ),
     ),
-    agentTable(data),
-    transparency(data),
+    h(
+      'details',
+      { className: 'an-details' },
+      h('summary', null, 'Details: agent activity, how every number is calculated, notes'),
+      h('div', { className: 'chart-grid' }, chartPanel('Agent activity', 'recorded', 'Tasks completed by each agent, from the tasks table.', agentChart(data))),
+      agentTable(data),
+      transparency(data),
+    ),
   );
+}
+
+const group = (data, name) => data.kpis.filter((k) => k.group === name);
+
+/** A titled block of the page. */
+function section(title, subtitle, ...content) {
+  return h('section', { className: 'an-section' }, h('h2', null, title), h('p', { className: 'muted small' }, subtitle), ...content);
 }
 
 /** How each agent worked, side by side: the process, not the product. */
@@ -168,16 +186,15 @@ function processPanel(data) {
             'div',
             { className: 'process-row', title: m.basis },
             h('dt', null, h('span', { className: 'process-label' }, m.label), m.detail && text != null ? h('span', { className: 'muted small process-detail' }, m.detail) : null),
-            h('dd', null, h('strong', null, text ?? '—'), sourceBadge(m.source)),
+            // Recorded is the rule here (said once in the section); only calculated values are marked.
+            h('dd', null, h('strong', null, text ?? '—'), m.source === 'calculated' ? sourceBadge(m.source) : null),
           );
         }),
       ),
     );
   return h(
-    'section',
+    'div',
     { className: 'chart-panel process-panel' },
-    h('div', { className: 'kpi-head' }, h('h2', null, 'Team process'), sourceBadge('recorded')),
-    h('p', { className: 'muted small' }, 'How the PO, the Developer and QA worked: interruptions, mistakes caught and work sent back. Hover a row to see how it is computed.'),
     h('div', { className: 'process-grid' }, column('PO', data.process.po), column('Developer', data.process.dev), column('QA', data.process.qa)),
   );
 }
@@ -327,7 +344,14 @@ function transparency(data) {
       'table',
       { className: 'data' },
       h('thead', null, h('tr', null, h('th', null, 'Metric'), h('th', null, 'Type'), h('th', null, 'Source and calculation'))),
-      h('tbody', null, data.kpis.map((k) => h('tr', null, h('td', null, k.label), h('td', null, sourceBadge(k.source)), h('td', null, k.basis)))),
+      h(
+        'tbody',
+        null,
+        data.kpis.filter((k) => k.group !== 'process').map((k) => h('tr', null, h('td', null, k.label), h('td', null, sourceBadge(k.source)), h('td', null, k.basis))),
+        [['PO', data.process.po], ['Developer', data.process.dev], ['QA', data.process.qa]].flatMap(([who, list]) =>
+          list.map((m) => h('tr', null, h('td', null, `${who}: ${m.label}`), h('td', null, sourceBadge(m.source)), h('td', null, m.basis))),
+        ),
+      ),
     ),
     h('h3', { className: 'an-subhead' }, 'Notes'),
     h('ul', { className: 'issues' }, data.notes.map((n) => h('li', null, n))),
