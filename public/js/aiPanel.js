@@ -18,7 +18,7 @@ export function mountAiPanel(state, actions) {
         'p',
         { className: 'muted small' },
         'Uses Claude Code installed on this computer, with its own login (for example a Claude Pro subscription). No API key is stored here. ',
-        'Set the PO and the Developer to "AI-powered" below to use it. Their requests and the generated files are sent to Anthropic over the internet. QA always stays scripted.',
+        'Set an agent\'s Brain to "AI-powered" below to use it, and pick its model there if it should differ from the default. Requests and the generated files are sent to Anthropic over the internet.',
       ),
       h(
         'form',
@@ -29,7 +29,7 @@ export function mountAiPanel(state, actions) {
             actions.saveAi({ model: model.value.trim() });
           },
         },
-        h('label', null, h('span', null, 'Model (sonnet uses less of the subscription limit than opus)'), model),
+        h('label', null, h('span', null, 'Default model for every AI-powered agent (sonnet uses less of the subscription limit than opus; haiku uses the least)'), model),
         h('datalist', { id: 'ai-models' }, ai.suggestedModels.map((m) => h('option', { value: m }))),
         h(
           'div',

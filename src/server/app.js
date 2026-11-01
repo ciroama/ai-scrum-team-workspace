@@ -86,8 +86,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
   const aiSettings = new AiSettings({ repository, ...(claudeBinary ? { binary: claudeBinary } : {}) });
-  team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: () => aiSettings.client() });
-  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary });
+  team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: (agentId) => aiSettings.client(repository.getAgentModel(agentId)) });
+  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary, modelOf: (agentId) => repository.getAgentModel(agentId) || aiSettings.model });
   orchestrator.init();
 
   /** Finds a workflow's product folder and the page the preview opens. */
@@ -290,9 +290,13 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       /^\/api\/agents\/([\w-]+)$/,
       async (req, [agentId]) => {
         const body = await readJsonBody(req);
-        if (body.enabled === undefined && body.mode === undefined) throw new HttpError(400, 'Send "enabled" and/or "mode".');
+        if (body.enabled === undefined && body.mode === undefined && body.model === undefined) throw new HttpError(400, 'Send "enabled", "mode" and/or "model".');
         let changed = false;
-        if (body.mode !== undefined) changed = orchestrator.setAgentMode(agentId, body.mode, { modelName: aiSettings.model }).changed || changed;
+        if (body.model !== undefined) {
+          if (body.model !== '' && body.model !== null && !AiSettings.isModelName(body.model)) throw new HttpError(400, 'The model must be a Claude Code model name, e.g. sonnet, opus or haiku.');
+          changed = orchestrator.setAgentModel(agentId, body.model || null, { defaultModel: aiSettings.model }).changed || changed;
+        }
+        if (body.mode !== undefined) changed = orchestrator.setAgentMode(agentId, body.mode, { modelName: repository.getAgentModel(agentId) || aiSettings.model }).changed || changed;
         if (body.enabled !== undefined) changed = orchestrator.setAgentEnabled(agentId, body.enabled).changed || changed;
         return { changed };
       },

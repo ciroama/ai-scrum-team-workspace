@@ -13,16 +13,16 @@ export class TeamRoster {
   /**
    * @param {object} deps
    * @param {(agentId: string) => 'scripted' | 'ai'} deps.getMode
-   * @param {() => import('../ai/claudeCode.js').ClaudeCodeClient} deps.getClient
+   * @param {(agentId: string) => import('../ai/claudeCode.js').ClaudeCodeClient} deps.getClient  each agent gets a client for its own model
    * @param {Map<string, object>} [deps.scripted]
    */
   constructor({ getMode, getClient, scripted = createTeam() }) {
     this.getMode = getMode;
     this.scripted = scripted;
     this.ai = new Map([
-      ['po', new AiProductOwnerAgent({ getClient })],
-      ['dev', new AiDeveloperAgent({ getClient })],
-      ['qa', new AiQaAgent({ getClient })],
+      ['po', new AiProductOwnerAgent({ getClient: () => getClient('po') })],
+      ['dev', new AiDeveloperAgent({ getClient: () => getClient('dev') })],
+      ['qa', new AiQaAgent({ getClient: () => getClient('qa') })],
     ]);
   }
 

@@ -345,9 +345,13 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     ],
   };
 
+  // ---- Compare models: requests grouped by the models the agents really used ----
+  const modelComparison = compareModels(selected, tasks, events);
+
   return {
     filter: { projectId, from, to },
     process,
+    modelComparison,
     projects,
     empty: !enough,
     kpis,
@@ -366,6 +370,64 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       'Workflows from Milestone 1 (kept in data/workspace.v1.db) are not included.',
     ],
   };
+}
+
+/** "claude-sonnet-5-5" -> "sonnet 5.5"; other names are kept as they are. */
+export function shortModel(model) {
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(model ?? '');
+  return m ? `${m[1]} ${m[2]}.${m[3]}` : model;
+}
+
+/**
+ * The setup a request really ran with: for each agent, the model(s) its
+ * recorded AI requests used, "scripted" if it worked without AI, or "—".
+ */
+export function setupOf(workflowId, tasks, events) {
+  const setup = {};
+  for (const agentId of ['po', 'dev', 'qa']) {
+    const models = [...new Set(events.filter((e) => e.type === 'ai.call' && e.workflowId === workflowId && e.actor === agentId && e.detail?.model).map((e) => shortModel(e.detail.model)))];
+    const worked = tasks.some((t) => t.workflowId === workflowId && t.agentId === agentId);
+    setup[agentId] = models.length ? models.join(' + ') : worked ? 'scripted' : '—';
+  }
+  return setup;
+}
+
+/** Process numbers per team setup, so different models can be compared on the same kind of work. */
+function compareModels(workflows, tasks, events) {
+  const groups = new Map();
+  for (const w of workflows) {
+    const setup = setupOf(w.id, tasks, events);
+    const key = `PO: ${setup.po} · Developer: ${setup.dev} · QA: ${setup.qa}`;
+    if (!groups.has(key)) groups.set(key, { key, setup, workflows: [] });
+    groups.get(key).workflows.push(w);
+  }
+  return [...groups.values()].map(({ key, setup, workflows: list }) => {
+    const ids = new Set(list.map((w) => w.id));
+    const of = (type) => events.filter((e) => e.type === type && ids.has(e.workflowId));
+    const n = list.length;
+    const verdicts = of('qa.verdict');
+    const verifiedOnce = [...new Set(verdicts.map((e) => e.workflowId))];
+    const rework = of('handoff').filter((e) => e.from === 'po' && e.to === 'dev' && e.status === 'failure');
+    const firstTimeRight = verifiedOnce.filter((id) => verdicts.find((e) => e.workflowId === id).status === 'success' && !rework.some((e) => e.workflowId === id));
+    const calls = of('ai.call');
+    const delivered = list.filter((w) => w.status === 'completed' || w.status === 'failed');
+    const verified = list.filter((w) => w.status === 'completed' && w.verified);
+    const times = verified.map((w) => durationMs(w.createdAt, w.finishedAt)).filter((ms) => ms != null && ms >= 0);
+    const per = (value) => (n ? value / n : null);
+    return {
+      setup: key,
+      models: setup,
+      requests: n,
+      verifiedRate: delivered.length ? verified.length / delivered.length : null,
+      poQuestionsPerRequest: per(sum(of('po.clarification').map((e) => e.detail?.questions?.length || 1))),
+      defectsPerRequest: per(of('defect.reported').length),
+      reworkPerRequest: per(rework.length),
+      firstTimeRight: verifiedOnce.length ? firstTimeRight.length / verifiedOnce.length : null,
+      aiRequestsPerRequest: per(calls.length),
+      tokensPerRequest: per(sum(calls.map((c) => (c.detail?.usage?.promptTokens ?? 0) + (c.detail?.usage?.completionTokens ?? 0)))),
+      averageCompletionMs: mean(times),
+    };
+  });
 }
 
 function formatDuration(ms) {

@@ -154,6 +154,24 @@ export function renderTeam(state, ui, actions) {
               )
             : h('span', { className: 'muted small' }, 'Always scripted, so verification stays independent of the AI'),
         ),
+        agent.supportsAi && agent.mode === 'ai'
+          ? h(
+              'div',
+              { className: 'mode-row' },
+              h('span', { className: 'state-label' }, 'Model'),
+              h(
+                'select',
+                {
+                  className: 'mode-select',
+                  disabled: ui.pendingModes.has(agent.id),
+                  'aria-label': `Model ${agent.label} uses`,
+                  onchange: (e) => actions.setAgentModel(agent.id, e.target.value),
+                },
+                h('option', { value: '', selected: !agent.model }, `Workspace default (${state.ai.model})`),
+                [...new Set([...state.ai.suggestedModels, ...(agent.model ? [agent.model] : [])])].map((m) => h('option', { value: m, selected: agent.model === m }, m)),
+              ),
+            )
+          : null,
         agent.finishingTask &&
           h('p', { className: 'transition-note' }, `Disabled while working: "${agent.finishingTask}" will finish safely, then ${agent.label} receives no new assignments.`),
         h('p', { className: 'activity' }, agent.activity),

@@ -2,7 +2,7 @@
 // use the same records and the same filters as the page: the statistics as
 // shown, one row per request, and one row per agent task.
 
-import { computeAnalytics, selectWorkflows } from './analytics.js';
+import { computeAnalytics, selectWorkflows, setupOf } from './analytics.js';
 
 /**
  * One CSV cell. Text that a spreadsheet would run as a formula (starting
@@ -34,6 +34,17 @@ export function statisticsCsv(source, filter, catalogue) {
     ...['po', 'dev', 'qa'].flatMap((agent) =>
       data.process[agent].map((m) => ({ section: `Team process: ${{ po: 'PO', dev: 'Developer', qa: 'QA' }[agent]}`, metric: m.label, value: m.value, unit: m.unit, detail: m.detail, source: m.source, basis: m.basis })),
     ),
+    ...data.modelComparison.flatMap((g) => [
+      ['Requests', g.requests, 'count'],
+      ['Completed and verified', g.verifiedRate, 'fraction 0-1'],
+      ['PO questions per request', g.poQuestionsPerRequest, 'count'],
+      ['Defects per request', g.defectsPerRequest, 'count'],
+      ['PO rework per request', g.reworkPerRequest, 'count'],
+      ['Right first time', g.firstTimeRight, 'fraction 0-1'],
+      ['AI requests per request', g.aiRequestsPerRequest, 'count'],
+      ['Tokens per request', g.tokensPerRequest, 'count'],
+      ['Average completion time', g.averageCompletionMs, 'ms'],
+    ].map(([metric, value, unit]) => ({ section: `Models: ${g.setup}`, metric, value: value == null ? null : Math.round(value * 100) / 100, unit, source: 'calculated', basis: 'Requests grouped by the models their AI requests really used (recorded ai.call events).' }))),
     ...data.outcomes.map((o) => ({ section: 'Workflow outcome', metric: o.label, value: o.value, unit: 'count', source: 'recorded', basis: 'Current status of each selected workflow.' })),
     ...data.agents.flatMap((a) => [
       { section: `Agent: ${a.label}`, metric: 'Tasks completed', value: a.tasksCompleted, unit: 'count', source: 'recorded' },
@@ -77,12 +88,16 @@ export function requestsCsv(source, filter) {
       lastRun,
       aiCalls,
       blocks,
+      setup: setupOf(w.id, source.tasks, source.events),
       corrections: eventsOf(w.id, 'handoff').filter((e) => e.from === 'qa' && e.to === 'dev').length,
       poRework: eventsOf(w.id, 'handoff').filter((e) => e.from === 'po' && e.to === 'dev' && e.status === 'failure').length,
     };
   });
   return toCsv(rows, [
     ['request id', (r) => r.w.id],
+    ['PO model', (r) => r.setup.po],
+    ['Developer model', (r) => r.setup.dev],
+    ['QA model', (r) => r.setup.qa],
     ['product id', (r) => r.w.productId ?? r.w.id],
     ['product', (r) => r.product],
     ['kind', (r) => (r.w.state?.base ? 'change request' : 'new product')],

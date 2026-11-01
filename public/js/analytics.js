@@ -140,6 +140,11 @@ export function renderAnalytics(data, ui) {
       : null,
     section('Overview', 'Your requests and how they ended.', h('div', { className: 'kpi-grid' }, group(data, 'overview').map(kpiCard))),
     section('How the team worked', 'The PO, the Developer and QA side by side: interruptions, mistakes caught and work sent back. Every value is recorded unless marked Calculated; hover a row to see how it is computed.', processPanel(data)),
+    section(
+      'Compare models',
+      'Requests grouped by the models the agents really used (read from their recorded AI requests). One column per setup; questions, defects, rework, AI calls and tokens are per request. Compare setups on similar requests.',
+      modelTable(data),
+    ),
     section('Quality', 'Tests QA ran and work sent back for correction.', h('div', { className: 'kpi-grid' }, group(data, 'quality').map(kpiCard))),
     section(
       'Flow and blocks',
@@ -196,6 +201,49 @@ function processPanel(data) {
     'div',
     { className: 'chart-panel process-panel' },
     h('div', { className: 'process-grid' }, column('PO', data.process.po), column('Developer', data.process.dev), column('QA', data.process.qa)),
+  );
+}
+
+function modelTable(data) {
+  if (!data.modelComparison.length) return h('p', { className: 'kpi-empty' }, NOT_ENOUGH);
+  const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+  const num = (v, digits = 1) => (v == null ? '—' : v.toFixed(digits));
+  const columns = [
+    ['Requests', (g) => String(g.requests), 'Requests run with this setup'],
+    ['Verified', (g) => pct(g.verifiedRate), 'Completed and verified, out of the requests that reached an outcome'],
+    ['Questions', (g) => num(g.poQuestionsPerRequest), 'PO questions per request'],
+    ['Defects', (g) => num(g.defectsPerRequest), 'Defects found per request'],
+    ['Rework', (g) => num(g.reworkPerRequest), 'Verified work the PO sent back, per request'],
+    ['1st time right', (g) => pct(g.firstTimeRight), 'Requests whose first delivery passed QA and the PO'],
+    ['AI calls', (g) => num(g.aiRequestsPerRequest), 'AI requests per request'],
+    ['Tokens', (g) => (g.tokensPerRequest == null ? '—' : Math.round(g.tokensPerRequest).toLocaleString('en-US')), 'Tokens per request, as reported by Claude Code'],
+    ['Avg. time', (g) => (g.averageCompletionMs == null ? '—' : duration(g.averageCompletionMs)), 'Average time to a verified result'],
+  ];
+  // Setups as columns, measures as rows: easy to read with a few setups side by side.
+  return h(
+    'div',
+    { className: 'chart-panel' },
+    h(
+      'div',
+      { className: 'table-scroll' },
+      h(
+        'table',
+        { className: 'data model-table' },
+        h(
+          'thead',
+          null,
+          h(
+            'tr',
+            null,
+            h('th', null, 'Team setup'),
+            data.modelComparison.map((g) =>
+              h('th', { className: 'num' }, h('span', { className: 'setup' }, `PO ${g.models.po}`), h('span', { className: 'setup' }, `Dev ${g.models.dev}`), h('span', { className: 'setup' }, `QA ${g.models.qa}`)),
+            ),
+          ),
+        ),
+        h('tbody', null, columns.map(([label, get, tip]) => h('tr', { title: tip }, h('td', null, label, h('span', { className: 'muted small', style: 'display:block' }, tip)), data.modelComparison.map((g) => h('td', { className: 'num' }, get(g)))))),
+      ),
+    ),
   );
 }
 

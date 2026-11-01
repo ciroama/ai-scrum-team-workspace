@@ -60,7 +60,9 @@ export class Orchestrator {
    * @param {string} [deps.gitBinary]
    * @param {number} [deps.commandTimeoutMs]
    */
-  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000 }) {
+  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000, modelOf = () => null }) {
+    /** The model each agent would use if AI-powered (for the record of each request). */
+    this.modelOf = modelOf;
     this.repository = repository;
     this.team = team;
     this.dataDir = dataDir;
@@ -168,7 +170,13 @@ export class Orchestrator {
       state: base ? { base } : {},
     });
     const config = this.repository.getAgentConfig();
-    const team = [...this.team.values()].map((a) => ({ id: a.id, label: a.label, kind: a.kind, enabled: config[a.id]?.enabled ?? false }));
+    const team = [...this.team.values()].map((a) => ({
+      id: a.id,
+      label: a.label,
+      kind: a.kind,
+      enabled: config[a.id]?.enabled ?? false,
+      model: a.kind === 'ai' ? this.modelOf(a.id) : null,
+    }));
 
     this.#event(workflow.id, {
       type: 'request.submitted',
@@ -359,6 +367,29 @@ export class Orchestrator {
         `${this.label(agentId)} switched to ${mode === 'ai' ? `AI-powered (Claude Code${modelName ? `, ${modelName}` : ''})` : 'scripted (rules and templates, no AI)'}.` +
         (running ? ` Its current task finishes in the previous mode.` : ''),
       detail: { agentId, mode, model: mode === 'ai' ? modelName ?? null : null },
+    });
+    return { changed: true };
+  }
+
+  /**
+   * Chooses the model an AI-powered agent uses (null: the workspace default).
+   * Like the other settings, it applies to the next assignment.
+   * @returns {{ changed: boolean }}
+   */
+  setAgentModel(agentId, model, { defaultModel } = {}) {
+    if (!this.team.has(agentId)) throw new NotFoundError(`Unknown agent "${agentId}"`);
+    if (!this.team.supportsAi?.(agentId)) throw new ValidationError(`${this.label(agentId)} has no AI-powered version in this workspace.`);
+    if (this.repository.getAgentModel(agentId) === (model || null)) return { changed: false };
+    this.repository.setAgentModel(agentId, model);
+    const active = this.repository.findActiveWorkflow();
+    this.#event(active?.id ?? null, {
+      type: 'agent.model',
+      category: 'config',
+      actor: 'user',
+      actorKind: 'human',
+      status: 'info',
+      summary: `${this.label(agentId)} now uses ${model ? `the model "${model}"` : `the workspace default model${defaultModel ? ` ("${defaultModel}")` : ''}`} when AI-powered.`,
+      detail: { agentId, model: model || null, defaultModel: defaultModel ?? null },
     });
     return { changed: true };
   }

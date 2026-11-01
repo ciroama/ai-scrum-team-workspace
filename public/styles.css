@@ -2858,3 +2858,17 @@ p.kpi-empty {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.model-table th .setup {
+  display: block;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.model-table td.num {
+  font-weight: 650;
+  font-size: var(--fs-md);
+}

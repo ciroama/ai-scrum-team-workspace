@@ -194,6 +194,19 @@ const actions = {
     }
   },
 
+  async setAgentModel(agentId, model) {
+    ui.pendingModes.add(agentId);
+    render();
+    try {
+      await api(`/api/agents/${agentId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+    } catch (error) {
+      showError(`Could not change the model: ${error.message}`);
+    } finally {
+      ui.pendingModes.delete(agentId);
+      await refresh();
+    }
+  },
+
   async saveAi(changes) {
     try {
       await api('/api/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });

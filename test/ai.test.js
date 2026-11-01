@@ -662,3 +662,28 @@ test('the PO must answer every QA concern and give the origin of every rejection
   assert.deepEqual(ok.reasonOrigins, ['requirements']);
   assert.deepEqual(ok.concernResponses, [{ concern: concerns[0], decision: 'agree', reason: 'The user said top right.' }]);
 });
+
+test('each agent can use its own model; requests record the models and Analytics compares setups', async (t) => {
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, ACCEPT, { content: PO_SPEC }, { content: page('red') }, ACCEPT]);
+  assert.equal((await fetch(`${app.url}/api/agents/dev`, json('PUT', { model: 'opus; rm -rf /' }))).status, 400);
+  assert.equal((await fetch(`${app.url}/api/agents/dev`, json('PUT', { model: 'opus' }))).status, 200);
+  const state = await (await fetch(`${app.url}/api/state`)).json();
+  assert.deepEqual(state.agents.map((a) => [a.id, a.model]), [['po', null], ['dev', 'opus'], ['qa', null]]);
+  assert.match(app.repository.listWorkspaceEvents().find((e) => e.type === 'agent.model').summary, /Developer now uses the model "opus"/);
+
+  const { workflow: first } = await run(app);
+  // Back to the workspace default for the second request.
+  await fetch(`${app.url}/api/agents/dev`, json('PUT', { model: '' }));
+  await run(app);
+
+  const received = await claude.received();
+  assert.deepEqual(received.map((r) => option(r.args, '--model')), ['sonnet', 'opus', 'sonnet', 'sonnet', 'sonnet', 'sonnet'], 'PO, Developer, PO review per request');
+  const created = app.repository.listEvents(first.id).find((e) => e.type === 'workflow.created');
+  assert.deepEqual(created.detail.team.map((a) => [a.id, a.model]), [['po', 'sonnet'], ['dev', 'opus'], ['qa', null]]);
+
+  const { modelComparison } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.deepEqual(
+    modelComparison.map((g) => [g.models.po, g.models.dev, g.models.qa, g.requests, g.aiRequestsPerRequest]).sort(),
+    [['claude-sonnet-test', 'claude-opus-test', 'scripted', 1, 3], ['claude-sonnet-test', 'claude-sonnet-test', 'scripted', 1, 3]].sort(),
+  );
+});

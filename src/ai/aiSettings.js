@@ -52,8 +52,14 @@ export class AiSettings {
     return { ok: true };
   }
 
-  client() {
-    return new ClaudeCodeClient({ model: this.model, binary: this.binary });
+  /** @param {string | null} [model]  an agent's own model; the workspace default otherwise */
+  client(model = null) {
+    return new ClaudeCodeClient({ model: model || this.model, binary: this.binary });
+  }
+
+  /** Whether a text is acceptable as a Claude Code model name. */
+  static isModelName(model) {
+    return typeof model === 'string' && MODEL_PATTERN.test(model);
   }
 
   /** Sends one tiny real request and records the outcome. */
