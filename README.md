@@ -315,6 +315,10 @@ How the integration behaves:
 - **Subscription, not paid API.** `ANTHROPIC_API_KEY` and
   `ANTHROPIC_AUTH_TOKEN` are removed from Claude Code's environment, so a key
   set on your computer can never turn this into pay-per-use billing.
+- **One model per agent.** The default model is set in **AI provider**; each
+  AI-powered agent can use its own (for example the Developer on `opus`, QA
+  on `haiku`), chosen on its card. Every request records the model of each
+  agent, and **Analytics → Compare models** puts team setups side by side.
 - **Usage limits.** Requests count against your subscription's usage limit.
   A workflow uses about 2–4 requests, and more when QA finds defects. The
   default model is `sonnet`, which uses less of the limit than `opus`; you
