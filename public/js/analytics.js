@@ -44,6 +44,7 @@ export function analyticsQuery(filter) {
 const EXPORTS = [
   ['statistics', 'Statistics', 'The numbers on this page: KPIs, outcomes and agent activity'],
   ['requests', 'Requests', 'One row per request: status, verification, clarifications, corrections, tests, AI requests and tokens'],
+  ['concerns', 'QA concerns', 'One row per concern QA raised about the requirements, with the PO\'s decision and reason'],
   ['tasks', 'Tasks', 'One row per agent task: agent, stage, status and duration'],
 ];
 

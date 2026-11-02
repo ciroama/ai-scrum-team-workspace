@@ -136,6 +136,40 @@ export function requestsCsv(source, filter) {
   ]);
 }
 
+/**
+ * One row per concern QA raised about the requirements, with the PO's
+ * answer: the decision and the reason it gave in its final review. A
+ * concern raised on a delivery that went back to the Developer never
+ * reached a review, so it has no answer.
+ */
+export function concernsCsv(source, filter) {
+  const titles = new Map(computeAnalytics(source, {}, {}).projects.map((p) => [p.id, p.title]));
+  const workflows = new Map(selectWorkflows(source, filter).map((w) => [w.id, w]));
+  const concerns = source.events.filter((e) => e.type === 'qa.concern' && workflows.has(e.workflowId));
+  // A review answers the concerns of the delivery it reviewed: the latest
+  // matching concern raised before it that is still unanswered.
+  const answers = new Map();
+  for (const review of source.events) {
+    if (review.type !== 'po.review' || !workflows.has(review.workflowId)) continue;
+    for (const response of review.detail?.concernResponses ?? []) {
+      const raised = concerns.findLast((c) => c.workflowId === review.workflowId && c.id < review.id && !answers.has(c.id) && (c.detail?.concern ?? c.summary) === response.concern);
+      if (raised) answers.set(raised.id, { ...response, at: review.ts });
+    }
+  }
+  const rows = concerns.map((e) => ({ e, w: workflows.get(e.workflowId), concern: e.detail?.concern ?? e.summary, answer: answers.get(e.id) ?? null }));
+  return toCsv(rows, [
+    ['request id', (r) => r.w.id],
+    ['product', (r) => titles.get(r.w.productId ?? r.w.id)],
+    ['kind', (r) => (r.w.state?.requestType === 'bug' ? 'bug report' : r.w.state?.base ? 'change request' : 'new product')],
+    ['request', (r) => r.w.requestText],
+    ['raised at', (r) => r.e.ts],
+    ['QA concern', (r) => r.concern],
+    ['PO decision', (r) => (r.answer ? r.answer.decision : 'not answered')],
+    ['PO reason', (r) => r.answer?.reason ?? null],
+    ['answered at', (r) => r.answer?.at ?? null],
+  ]);
+}
+
 /** One row per agent task, as recorded. */
 export function tasksCsv(source, filter, { agents = [] } = {}) {
   const workflows = new Map(selectWorkflows(source, filter).map((w) => [w.id, w]));

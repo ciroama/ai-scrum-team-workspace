@@ -597,6 +597,15 @@ test("QA (AI) test failures become defects for the Developer; QA's concerns reac
   assert.equal(poConcerns.value, 0);
   assert.match(poConcerns.detail, /of 2 answered · 2 dismissed|of 1 answered · 1 dismissed/);
   assert.ok(p.dev.find((m) => m.key === 'devCodeDefects').value >= 1);
+
+  // The concerns export pairs each concern with the PO's answer; the one raised
+  // on the delivery that went back to the Developer was never reviewed.
+  const csv = await (await fetch(`${app.url}/api/analytics/export/concerns.csv`)).text();
+  const lines = csv.trim().split('\r\n');
+  assert.equal(lines[0], 'request id,product,kind,request,raised at,QA concern,PO decision,PO reason,answered at');
+  assert.equal(lines.length, 3);
+  assert.match(lines[1], /,not answered,,$/);
+  assert.match(lines[2], /,disagree,The user asked for the phrase in red; the page has no other text\.,\d{4}-/);
 });
 
 test('AI-written tests cannot write files or start processes, and a broken file never counts against the product', async (t) => {

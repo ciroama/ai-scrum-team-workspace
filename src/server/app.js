@@ -13,7 +13,7 @@ import { TeamRoster } from '../agents/roster.js';
 import { AiSettings } from '../ai/aiSettings.js';
 import { PreviewError, PreviewService } from '../preview/previewService.js';
 import { computeAnalytics, parseDateFilter } from '../analytics/analytics.js';
-import { requestsCsv, statisticsCsv, tasksCsv } from '../analytics/export.js';
+import { concernsCsv, requestsCsv, statisticsCsv, tasksCsv } from '../analytics/export.js';
 import { AgentKind } from '../agents/agent.js';
 import { resolveInside } from '../actions/writeFile.js';
 
@@ -231,13 +231,14 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     ],
     [
       'GET',
-      /^\/api\/analytics\/export\/(statistics|requests|tasks)\.csv$/,
+      /^\/api\/analytics\/export\/(statistics|requests|concerns|tasks)\.csv$/,
       (req, [kind]) => {
         const filter = analyticsFilter(req);
         const source = repository.analyticsSource();
         const body = {
           statistics: () => statisticsCsv(source, filter, { agents: agentLabels() }),
           requests: () => requestsCsv(source, filter),
+          concerns: () => concernsCsv(source, filter),
           tasks: () => tasksCsv(source, filter, { agents: agentLabels() }),
         }[kind]();
         const day = new Date().toISOString().slice(0, 10);
