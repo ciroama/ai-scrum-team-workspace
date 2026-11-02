@@ -273,8 +273,8 @@ The first AI integration used GitHub Models. That service was retired on
 | POST | `/api/workflows` | `{ "request": "...", "productId"?: "..." }` → 201, or 400 (invalid) / 404 (no such product) / 409 (busy) |
 | GET | `/api/workflows/:id` | workflow, tasks, timeline, product files read from disk |
 | POST | `/api/workflows/:id/answer` | `{ "answer": "..." }` answer what the team is waiting for (`waitingFor`): the PO's question (back to analysis with the whole dialogue), changes to the requirements before approval (back to analysis), or a Developer's/QA's question the PO passed on (back to the asker's stage) |
-| POST | `/api/workflows/:id/approve` | approve the requirements (approval checkpoint); the PO hands them to the Developer |
-| PUT | `/api/team-rules` | `{ "requireApproval": true }` whether you approve the requirements before development starts |
+| POST | `/api/workflows/:id/approve` | approve the requirements (approval checkpoint, off until the next release); the PO hands them to the Developer |
+| PUT | `/api/team-rules` | `{ "requireApproval": true }` turns the approval checkpoint on (no button in the dashboard yet: planned for the next release) |
 | POST | `/api/workflows/:id/resume` | resume a blocked/interrupted workflow |
 | POST | `/api/workflows/:id/cancel` | cancel a blocked/interrupted workflow |
 | PUT | `/api/agents/:id` | `{ "enabled": true \| false, "mode": "scripted" \| "ai" }` |

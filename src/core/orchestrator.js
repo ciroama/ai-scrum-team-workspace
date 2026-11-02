@@ -20,8 +20,9 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  * experiments run under different rules can be compared.
  * 1: the Developer and QA could not ask questions; the PO read the code in its review.
  * 2: the Developer and QA may ask the PO (who answers or passes the question
- *    on to the user); the PO never reads the code; the user may approve the
- *    requirements before development starts.
+ *    on to the user); the PO never reads the code. The approval checkpoint
+ *    (the user approves the requirements before development starts) is
+ *    built but off: it is planned for the next release.
  */
 export const TEAM_RULES_VERSION = 2;
 const OUTPUT_LIMIT = 20_000;

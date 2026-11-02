@@ -138,9 +138,7 @@ flowchart TD
     A{"PO: requirement analysis<br/>Is the request clear and buildable?"}
     A -- "no: asks a question" --> Q([You answer<br/>in the same request])
     Q --> A
-    A -- "yes: requirements +<br/>acceptance criteria" --> P{"You: approve the requirements?<br/>(if turned on)"}
-    P -- "ask for changes" --> A
-    P -- "approve" --> I["Developer: implementation<br/>files written + Git commit"]
+    A -- "yes: requirements +<br/>acceptance criteria" --> I["Developer: implementation<br/>files written + Git commit"]
     I -. "a question first" .-> K{"PO answers,<br/>or passes it on to you"}
     K -.-> I
     I --> V{"QA: verification<br/>Do all checks pass?"}
@@ -165,10 +163,6 @@ flowchart TD
    PO's question**), and the PO continues **the same request**, seeing all
    its questions and all your answers. Only the latest request of a product
    can be left waiting, for example if you stop before answering.
-   **Approval (you).** When "You approve the requirements" is on (Team page,
-   on by default), the PO waits for you after writing them: click
-   **Approve requirements**, or write what to change and the PO rewrites
-   them and asks you again. Nothing is built before you approve.
 2. **Implementation (Developer).** The product files are written to disk and
    committed to the product's own Git repository. Before writing the code,
    an AI-powered Developer may **ask the PO questions** (once per piece of
@@ -206,9 +200,10 @@ models", and the `team rules` column of the requests CSV):
 - **v1**: the Developer and QA could not ask questions, and the AI-powered
   PO read the product files in its final review.
 - **v2** (current): the Developer and QA may ask the PO, who answers or
-  passes the question on to you; the PO never reads the code; you can
-  approve the requirements before development starts (whether the approval
-  was on is recorded too).
+  passes the question on to you; the PO never reads the code.
+
+Planned for the next release: an approval checkpoint, where the PO waits
+for you to approve the requirements before the Developer starts.
 
 ### Who decides what
 

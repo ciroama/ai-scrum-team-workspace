@@ -239,15 +239,6 @@ const actions = {
     await workflowAction(workflowId, 'approve');
   },
 
-  async setTeamRules(changes) {
-    try {
-      await api('/api/team-rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
-    } catch (error) {
-      showError(error.message);
-    }
-    await refresh();
-  },
-
   async cancel(workflowId) {
     if (!window.confirm('Cancel this workflow? Its recorded history and generated files are kept, but it will not continue.')) return;
     await workflowAction(workflowId, 'cancel');

@@ -2901,18 +2901,3 @@ p.kpi-empty {
   color: var(--text);
 }
 
-/* Team rules (Team page): the approval checkpoint */
-.team-rule {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-.team-rule input {
-  margin-top: 3px;
-  flex: none;
-}

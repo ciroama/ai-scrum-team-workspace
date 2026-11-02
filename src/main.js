@@ -25,8 +25,7 @@ const claudeBinary = process.env.CLAUDE_BINARY || undefined;
 
 let app;
 try {
-  // The user approves the requirements before development starts, unless turned off on the Team page.
-  app = await startServer({ port, dataDir, previewPort, claudeBinary, approvalByDefault: true });
+  app = await startServer({ port, dataDir, previewPort, claudeBinary });
 } catch (error) {
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${port} is already in use. Stop the other program or start with another port, e.g.: PORT=4000 npm start`);
