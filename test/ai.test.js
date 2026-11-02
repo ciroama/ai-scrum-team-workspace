@@ -640,6 +640,8 @@ test('team process statistics: PO questions one by one, Developer mistakes caugh
   assert.equal(value(p.po, 'poInterruptionsCount').value, 1, 'one interruption…');
   assert.equal(value(p.po, 'poQuestionsCount').value, 3, '…with three questions asked at once');
   assert.equal(value(p.po, 'poAnswers').value, 1);
+  assert.equal(value(p.po, 'poAssumptions').value, 1, 'one assumption written down…');
+  assert.equal(value(p.po, 'poAssumptions').detail, '1 from your answers · 0 decided by the PO');
   assert.equal(value(p.po, 'poRejected').value, 1);
   assert.equal(value(p.dev, 'devDeliveries').value, 3, 'first build, QA correction, PO rework');
   assert.equal(value(p.dev, 'devCaughtByQa').value, 1);

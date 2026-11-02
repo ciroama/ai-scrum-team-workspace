@@ -329,7 +329,8 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const concerns = events.filter((e) => e.type === 'qa.concern');
   const reviews = events.filter((e) => e.type === 'po.review');
   const devTasks = tasks.filter((t) => t.agentId === 'dev' && t.status === 'completed' && (t.stage === 'implementation' || t.stage === 'correction'));
-  const poDecided = sum(events.filter((e) => e.type === 'po.requirements').map((e) => (e.detail?.assumptions ?? []).filter((a) => a.decidedBy === 'po').length));
+  const assumptions = events.filter((e) => e.type === 'po.requirements').flatMap((e) => e.detail?.assumptions ?? []);
+  const poDecided = assumptions.filter((a) => a.decidedBy === 'po').length;
   const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
   const firstTimeRight = verifiedWorkflows.filter((id) => {
     const first = verdicts.find((e) => e.workflowId === id);
@@ -351,6 +352,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poInterruptionsCount', 'Times it stopped to ask you', poQuestionRounds.length, `in ${askedIn} of ${total} request${total === 1 ? '' : 's'}`, SOURCE.recorded, 'Recorded po.clarification events: each one is the PO stopping the work to ask you before writing the requirements.'),
       metric('poQuestionsCount', 'Questions asked', poQuestions, poQuestionRounds.length ? `${(poQuestions / poQuestionRounds.length).toFixed(1)} per interruption` : null, SOURCE.recorded, 'Every question counts, also when the PO asked several in one message (the questions recorded on each po.clarification event).'),
       metric('poAnswers', 'Answers it needed from you', answers.length, null, SOURCE.recorded, 'Recorded clarification.answered events.'),
+      metric('poAssumptions', 'Assumptions written down', assumptions.length, `${assumptions.length - poDecided} from your answers · ${poDecided} decided by the PO`, SOURCE.recorded, 'Assumptions the PO wrote into the agreed requirements (recorded po.requirements events), each marked as coming from you or decided by the PO.'),
       metric('poDecided', 'Details you left to the PO', poDecided, null, SOURCE.recorded, 'Assumptions marked "decided by the PO" in the agreed requirements, after you told the PO to decide.'),
       metric('poGuessesStopped', 'Guesses stopped', guessesStopped, 'it decided something you never said and had to ask instead', SOURCE.recorded, 'PO answers refused because, before you had answered anything, they decided a detail you never gave (or skipped the questions without a reason). The PO then had to ask.'),
       metric('poRequirementGaps', 'Requirement gaps found later', fromRequirements, 'by QA\'s own tests or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the requirements: failing QA tests of things you asked that the requirements never stated, and PO rejection reasons marked "requirements".'),
