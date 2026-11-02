@@ -234,9 +234,6 @@ export function stageStates(state, detail) {
 /** What the team is waiting for from you, when a request is paused. */
 export function waitingFor(workflow) {
   const st = workflow.state || {};
-  if (st.waitingFor === 'approval') {
-    return { short: 'Waiting for your approval', title: 'Approve the requirements', text: "Read the PO's requirements above. Approve them to start development, or write in the box below what to change." };
-  }
   if (st.waitingFor === 'team') {
     const who = st.teamQuestions && st.teamQuestions.from === 'qa' ? 'QA' : 'The Developer';
     return { short: 'Waiting for your answer', title: `${who} asked something only you can decide`, text: 'The PO passed the question on to you. Answer it in the box below to continue this request.' };
@@ -301,14 +298,10 @@ export function progressBanner(state, workflow, ui, actions) {
   }
   if (workflow.status === 'needs_clarification') {
     const waiting = waitingFor(workflow);
-    const approval = workflow.state && workflow.state.waitingFor === 'approval';
     return h(
       'div',
       { className: 'banner', dataset: { tone: 'warning' } },
       h('div', { className: 'banner-text' }, h('strong', null, waiting.title), waiting.text),
-      approval
-        ? h('div', { className: 'banner-actions' }, h('button', { type: 'button', className: 'btn btn-primary btn-sm', disabled: busy, onclick: () => actions.approve(workflow.id) }, 'Approve requirements'))
-        : null,
     );
   }
   if (workflow.status === 'failed') {

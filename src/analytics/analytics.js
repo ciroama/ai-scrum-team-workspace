@@ -329,8 +329,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const concerns = events.filter((e) => e.type === 'qa.concern');
   const reviews = events.filter((e) => e.type === 'po.review');
   const devTasks = tasks.filter((t) => t.agentId === 'dev' && t.status === 'completed' && (t.stage === 'implementation' || t.stage === 'correction'));
-  // The agreed requirements of each request: the last version the PO wrote
-  // (with the approval checkpoint, the user may have asked for changes first).
+  // The agreed requirements of each request: the last version the PO wrote.
   const lastRequirements = [...new Map(events.filter((e) => e.type === 'po.requirements').map((e) => [e.workflowId, e])).values()];
   const assumptions = lastRequirements.flatMap((e) => e.detail?.assumptions ?? []);
   // Questions the Developer and QA asked the PO, and what became of them.
@@ -342,8 +341,6 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     const n = sum(rounds.map((e) => e.detail?.questions?.length ?? 0));
     return metric(key, 'Questions it asked the PO', n, rounds.length ? `${rounds.length} time${rounds.length === 1 ? '' : 's'} it stopped · ${teamAnswered(from)} answered by the PO · ${teamPassedOn(from)} passed on to you` : null, SOURCE.recorded, `Recorded team.question events: the ${who} stopped before doing its work to ask the PO (team rules v2).`);
   };
-  const approvals = events.filter((e) => e.type === 'requirements.approved');
-  const changesAsked = events.filter((e) => e.type === 'requirements.changes_requested');
   const poDecided = assumptions.filter((a) => a.decidedBy === 'po').length;
   const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
   const firstTimeRight = verifiedWorkflows.filter((id) => {
@@ -375,7 +372,6 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poConcerns', 'QA concerns it agreed with', concernAnswers.filter((r) => r.decision === 'agree').length, concernAnswers.length ? `of ${concernAnswers.length} answered · ${concernAnswers.filter((r) => r.decision === 'disagree').length} dismissed` : null, SOURCE.recorded, 'The PO\'s explicit answer to each concern QA raised, recorded with its final review.'),
       metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
       metric('poTeamAnswered', "Team questions it answered", teamAnswered('dev') + teamAnswered('qa'), `${teamPassedOn('dev') + teamPassedOn('qa')} passed on to you`, SOURCE.recorded, 'Questions from the Developer and QA that the PO answered itself (recorded team.answer events), and those it passed on to you (po.escalation events).'),
-      metric('poApproved', 'Requirements you approved', approvals.length, changesAsked.length ? `after asking for changes ${changesAsked.length} time${changesAsked.length === 1 ? '' : 's'}` : null, SOURCE.recorded, 'Recorded requirements.approved events (approval checkpoint), and requirements.changes_requested events when you sent the requirements back to the PO first.'),
       metric('poRefused', 'AI answers refused by its rules', refused('po'), null, SOURCE.recorded, refusedBasis('PO')),
     ],
     dev: [

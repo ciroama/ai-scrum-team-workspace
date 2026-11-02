@@ -235,10 +235,6 @@ const actions = {
     await workflowAction(workflowId, 'resume');
   },
 
-  async approve(workflowId) {
-    await workflowAction(workflowId, 'approve');
-  },
-
   async cancel(workflowId) {
     if (!window.confirm('Cancel this workflow? Its recorded history and generated files are kept, but it will not continue.')) return;
     await workflowAction(workflowId, 'cancel');

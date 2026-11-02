@@ -207,7 +207,7 @@ test('CSV exports contain the recorded data and follow the filters', async (t) =
   assert.equal(lines.length, 3, 'header + one row per request');
   const hello = lines.find((l) => l.startsWith(product.id));
   assert.match(hello, /,new product,,,Build a simple Hello World web application\.,/);
-  assert.match(hello, /,completed,true,0,0,0,0,0,false,0,,,0,0,0,0,1,/, 'no PO interruptions, no questions, no assumptions, did not skip questions, no answers, no approval checkpoint, no team questions, requirements v1');
+  assert.match(hello, /,completed,true,0,0,0,0,0,false,0,0,0,0,0,1,/, 'no PO interruptions, no questions, no assumptions, did not skip questions, no answers, no team questions, requirements v1');
   // Text that a spreadsheet would run as a formula is neutralised, quotes are escaped.
   assert.ok(lines.some((l) => l.includes('"\'=HYPERLINK(""http://x""), ""quoted"""')));
 

@@ -119,8 +119,6 @@ export function requestsCsv(source, filter) {
     ['assumptions decided by the PO', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy === 'po').length : null)],
     ['PO went ahead without asking', (r) => (r.spec ? eventsOf(r.w.id, 'po.requirements').some((e) => e.detail?.whyNoQuestions) : null)],
     ['your answers', (r) => eventsOf(r.w.id, 'clarification.answered').length],
-    ['requirements approved by you', (r) => (r.w.state?.rules?.approval ? eventsOf(r.w.id, 'requirements.approved').length > 0 : null)],
-    ['changes you asked to the requirements', (r) => (r.w.state?.rules?.approval ? eventsOf(r.w.id, 'requirements.changes_requested').length : null)],
     ['Developer questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'dev').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
     ['QA questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'qa').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
     ['team questions answered by the PO', (r) => eventsOf(r.w.id, 'team.answer').reduce((n, e) => n + (e.detail?.answers?.length ?? 0), 0)],

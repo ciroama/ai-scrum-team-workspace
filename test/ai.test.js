@@ -751,7 +751,7 @@ test('PO contract: a product of many versions fits, and the error says what is w
   assert.throws(() => validatePoReply({ ...reply(1), requirements: ['x'.repeat(1001)] }, { firstRound: false }), /requirements\[0\] must be a non-empty string of at most 1000/);
 });
 
-// ---- Team rules v2: the Developer and QA ask the PO; the user approves the requirements ----
+// ---- Team rules v2: the Developer and QA ask the PO ----
 
 const DEV_ASKS = { content: { status: 'questions', questions: [{ question: 'Which font should the phrase use?', why: 'The requirements give no font.' }] } };
 const PO_ANSWERS = { content: { answers: [{ question: 1, answer: 'Use the default sans-serif font.' }] } };
@@ -760,7 +760,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, DEV_ASKS, PO_ANSWERS, DEV_ASKS, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
-  assert.deepEqual(workflow.state.rules, { version: 2, approval: false });
+  assert.deepEqual(workflow.state.rules, { version: 2 });
 
   const question = events.find((e) => e.type === 'team.question');
   assert.equal(question.actor, 'dev');
@@ -820,39 +820,6 @@ test('QA asks the PO; what only the user can decide is passed on to the user, an
   assert.equal(p.qa.find((m) => m.key === 'qaQuestions').detail, '1 time it stopped · 0 answered by the PO · 1 passed on to you');
   assert.equal(p.po.find((m) => m.key === 'poTeamAnswered').detail, '1 passed on to you');
   assert.equal(p.po.find((m) => m.key === 'poAnswers').value, 0, 'an answer to a teammate is not an answer to the PO');
-});
-
-test('approval checkpoint: the Developer starts only after the user approves; changes go back to the PO', async (t) => {
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: PO_SPEC }, { content: page('red') }, ACCEPT]);
-  assert.deepEqual(await (await fetch(`${app.url}/api/team-rules`, json('PUT', { requireApproval: true }))).json(), { requireApproval: true });
-  assert.equal((await fetch(`${app.url}/api/team-rules`, json('PUT', { requireApproval: 'yes' }))).status, 400);
-  assert.equal((await (await fetch(`${app.url}/api/state`)).json()).teamRules.requireApproval, true);
-
-  const { workflow } = await run(app);
-  assert.equal(workflow.status, 'needs_clarification');
-  assert.equal(workflow.state.waitingFor, 'approval');
-  assert.equal((await claude.received()).length, 1, 'nothing is built before the approval');
-  assert.ok(!app.repository.listEvents(workflow.id).some((e) => e.type === 'handoff'), 'no handoff to the Developer yet');
-
-  // Asking for changes: the PO rewrites the requirements with them, then waits again.
-  const again = await app.orchestrator.answer(workflow.id, 'Make the phrase bigger.').done;
-  assert.equal(again.state.waitingFor, 'approval');
-  assert.match((await claude.received())[1].stdin, /Do you approve these requirements \(version 1\)\?\n {3}User: Make the phrase bigger\./);
-
-  const approved = await fetch(`${app.url}/api/workflows/${workflow.id}/approve`, { method: 'POST' });
-  assert.equal(approved.status, 200);
-  await app.orchestrator.current?.promise;
-  const final = app.repository.getWorkflow(workflow.id);
-  assert.equal(final.status, 'completed');
-  assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/approve`, { method: 'POST' })).status, 409);
-  const events = app.repository.listEvents(workflow.id);
-  const order = events.filter((e) => ['requirements.changes_requested', 'requirements.approved', 'handoff'].includes(e.type)).map((e) => e.type);
-  assert.deepEqual(order.slice(0, 3), ['requirements.changes_requested', 'requirements.approved', 'handoff']);
-
-  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
-  assert.equal(p.po.find((m) => m.key === 'poApproved').value, 1);
-  assert.equal(p.po.find((m) => m.key === 'poApproved').detail, 'after asking for changes 1 time');
-  assert.equal(p.po.find((m) => m.key === 'poAssumptions').value, 1, 'only the agreed (last) requirements count');
 });
 
 test('contracts: questions only once; the PO answers every question or passes it on with a reason; a scripted PO passes everything on', () => {

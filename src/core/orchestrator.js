@@ -20,9 +20,7 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  * experiments run under different rules can be compared.
  * 1: the Developer and QA could not ask questions; the PO read the code in its review.
  * 2: the Developer and QA may ask the PO (who answers or passes the question
- *    on to the user); the PO never reads the code. The approval checkpoint
- *    (the user approves the requirements before development starts) is
- *    built but off: it is planned for the next release.
+ *    on to the user); the PO never reads the code.
  */
 export const TEAM_RULES_VERSION = 2;
 const OUTPUT_LIMIT = 20_000;
@@ -72,9 +70,7 @@ export class Orchestrator {
    * @param {string} [deps.gitBinary]
    * @param {number} [deps.commandTimeoutMs]
    */
-  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000, modelOf = () => null, requireApproval = () => false }) {
-    /** Whether the user approves the requirements before the Developer starts. */
-    this.requireApproval = requireApproval;
+  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000, modelOf = () => null }) {
     /** The model each agent would use if AI-powered (for the record of each request). */
     this.modelOf = modelOf;
     this.repository = repository;
@@ -187,7 +183,7 @@ export class Orchestrator {
       stage: 'analysis',
       productId,
       title: base ? base.spec.title : 'New request',
-      state: { ...(base ? { base, requestType: type ?? 'change' } : {}), rules: { version: TEAM_RULES_VERSION, approval: Boolean(this.requireApproval()) } },
+      state: { ...(base ? { base, requestType: type ?? 'change' } : {}), rules: { version: TEAM_RULES_VERSION } },
     });
     const requestType = base ? type ?? 'change' : null;
     const config = this.repository.getAgentConfig();
@@ -216,7 +212,7 @@ export class Orchestrator {
       type: 'workflow.created',
       category: 'workflow',
       summary: `Workflow created. Team availability: ${team.map((a) => `${a.label} ${a.enabled ? 'enabled' : 'disabled'}`).join(', ')}.`,
-      detail: { team, productDir: this.productDir(workflow.id), rules: { version: TEAM_RULES_VERSION, approval: Boolean(this.requireApproval()) } },
+      detail: { team, productDir: this.productDir(workflow.id), rules: { version: TEAM_RULES_VERSION } },
     });
 
     return { workflow: this.repository.getWorkflow(workflow.id), done: this.#start(workflow.id) };
@@ -239,19 +235,6 @@ export class Orchestrator {
     this.#assertIdle();
     const state = workflow.state;
     const user = { actor: 'user', actorKind: 'human', from: 'user' };
-
-    if (state.waitingFor === 'approval') {
-      // Not approved: what to change goes back to the PO, like an answer.
-      const question = `Do you approve these requirements (version ${state.spec?.version ?? '?'})?`;
-      this.#event(workflowId, { ...user, type: 'requirements.changes_requested', category: 'request', to: 'po', summary: `Changes asked to the requirements: "${text}"`, detail: { answer: text, version: state.spec?.version ?? null } });
-      this.repository.updateWorkflow(workflowId, {
-        status: 'running',
-        stage: 'analysis',
-        finishedAt: null,
-        state: { ...state, dialogue: [...(state.dialogue ?? []), { question, answer: text }], waitingFor: null, pendingHandoff: null },
-      });
-      return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
-    }
 
     if (state.waitingFor === 'team') {
       // A question the PO passed on: the answer goes to the teammate who asked.
@@ -283,36 +266,6 @@ export class Orchestrator {
       finishedAt: null,
       state: { ...state, dialogue, clarification: null, waitingFor: null },
     });
-    return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
-  }
-
-  /**
-   * The user approves the requirements the PO wrote: the PO hands them to
-   * the Developer and the work starts.
-   * @returns {{ workflow: object, done: Promise<object> }}
-   */
-  approve(workflowId) {
-    const workflow = this.repository.getWorkflow(workflowId);
-    if (!workflow) throw new NotFoundError('Workflow not found');
-    if (workflow.status !== 'needs_clarification' || workflow.state.waitingFor !== 'approval') {
-      throw new ConflictError('These requirements are not waiting for your approval.');
-    }
-    this.#assertIdle();
-    const state = workflow.state;
-    this.#event(workflowId, {
-      type: 'requirements.approved',
-      category: 'request',
-      actor: 'user',
-      actorKind: 'human',
-      from: 'user',
-      to: 'po',
-      status: 'success',
-      summary: `You approved the requirements (version ${state.spec.version ?? '?'}).`,
-      detail: { version: state.spec.version ?? null },
-    });
-    const po = this.team.get('po');
-    this.#event(workflowId, { type: 'handoff', category: 'handoff', actor: po.id, actorKind: po.kind, from: po.id, to: 'dev', summary: state.pendingHandoff?.message ?? 'The requirements are approved. Please implement them.', detail: { references: state.pendingHandoff?.references ?? [] } });
-    this.repository.updateWorkflow(workflowId, { status: 'running', stage: 'implementation', finishedAt: null, state: { ...state, waitingFor: null, pendingHandoff: null } });
     return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
   }
 
@@ -696,26 +649,6 @@ export class Orchestrator {
       },
     });
     const handoff = { message: result.handoffMessage, references: [result.document.path, ...spec.acceptanceCriteria.map((c) => c.id)] };
-    if (workflow.state.rules?.approval) {
-      // Human checkpoint: the Developer starts only after the user approves.
-      this.#event(workflow.id, {
-        type: 'requirements.awaiting_approval',
-        category: 'workflow',
-        status: 'warning',
-        summary: 'The PO is waiting for your approval of the requirements. Approve them to start development, or write what to change.',
-      });
-      return {
-        output: { summary: result.summary, recipeId: spec.recipeId },
-        update: {
-          status: 'needs_clarification',
-          recipeId: spec.recipeId,
-          title: spec.title,
-          stage: 'implementation',
-          finishedAt: now(),
-          state: { ...workflow.state, spec, attempt: 0, waitingFor: 'approval', pendingHandoff: handoff },
-        },
-      };
-    }
     say({ type: 'handoff', category: 'handoff', from: agent.id, to: 'dev', summary: handoff.message, detail: { references: handoff.references } });
     return {
       output: { summary: result.summary, recipeId: spec.recipeId },
