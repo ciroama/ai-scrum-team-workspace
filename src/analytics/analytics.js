@@ -85,7 +85,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     { key: 'verified', label: 'Completed and verified by QA', value: verified.length, tone: 'good' },
     { key: 'completed_unverified', label: 'Completed, not verified', value: completed.length - verified.length, tone: 'neutral' },
     { key: 'blocked', label: 'Blocked (now)', value: byStatus('blocked').length, tone: 'warning' },
-    { key: 'needs_clarification', label: 'Needs clarification', value: byStatus('needs_clarification').length, tone: 'neutral' },
+    { key: 'needs_clarification', label: 'Waiting for you', value: byStatus('needs_clarification').length, tone: 'neutral' },
     { key: 'running', label: 'Running', value: byStatus('running').length, tone: 'neutral' },
     { key: 'interrupted', label: 'Interrupted', value: byStatus('interrupted').length, tone: 'neutral' },
     { key: 'cancelled', label: 'Cancelled', value: byStatus('cancelled').length, tone: 'neutral' },
@@ -329,7 +329,21 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const concerns = events.filter((e) => e.type === 'qa.concern');
   const reviews = events.filter((e) => e.type === 'po.review');
   const devTasks = tasks.filter((t) => t.agentId === 'dev' && t.status === 'completed' && (t.stage === 'implementation' || t.stage === 'correction'));
-  const assumptions = events.filter((e) => e.type === 'po.requirements').flatMap((e) => e.detail?.assumptions ?? []);
+  // The agreed requirements of each request: the last version the PO wrote
+  // (with the approval checkpoint, the user may have asked for changes first).
+  const lastRequirements = [...new Map(events.filter((e) => e.type === 'po.requirements').map((e) => [e.workflowId, e])).values()];
+  const assumptions = lastRequirements.flatMap((e) => e.detail?.assumptions ?? []);
+  // Questions the Developer and QA asked the PO, and what became of them.
+  const teamAsked = (from) => events.filter((e) => e.type === 'team.question' && e.actor === from);
+  const teamAnswered = (to) => sum(events.filter((e) => e.type === 'team.answer' && e.to === to).map((e) => e.detail?.answers?.length ?? 0));
+  const teamPassedOn = (from) => sum(events.filter((e) => e.type === 'po.escalation' && e.detail?.for === from).map((e) => e.detail?.questions?.length ?? 0));
+  const askedMetric = (key, who, from) => {
+    const rounds = teamAsked(from);
+    const n = sum(rounds.map((e) => e.detail?.questions?.length ?? 0));
+    return metric(key, 'Questions it asked the PO', n, rounds.length ? `${rounds.length} time${rounds.length === 1 ? '' : 's'} it stopped · ${teamAnswered(from)} answered by the PO · ${teamPassedOn(from)} passed on to you` : null, SOURCE.recorded, `Recorded team.question events: the ${who} stopped before doing its work to ask the PO (team rules v2).`);
+  };
+  const approvals = events.filter((e) => e.type === 'requirements.approved');
+  const changesAsked = events.filter((e) => e.type === 'requirements.changes_requested');
   const poDecided = assumptions.filter((a) => a.decidedBy === 'po').length;
   const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
   const firstTimeRight = verifiedWorkflows.filter((id) => {
@@ -360,6 +374,8 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poBugsRequirements', 'Your bugs traced to its requirements', bugsFromRequirements, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the requirements: they missed or misstated what you wanted.'),
       metric('poConcerns', 'QA concerns it agreed with', concernAnswers.filter((r) => r.decision === 'agree').length, concernAnswers.length ? `of ${concernAnswers.length} answered · ${concernAnswers.filter((r) => r.decision === 'disagree').length} dismissed` : null, SOURCE.recorded, 'The PO\'s explicit answer to each concern QA raised, recorded with its final review.'),
       metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
+      metric('poTeamAnswered', "Team questions it answered", teamAnswered('dev') + teamAnswered('qa'), `${teamPassedOn('dev') + teamPassedOn('qa')} passed on to you`, SOURCE.recorded, 'Questions from the Developer and QA that the PO answered itself (recorded team.answer events), and those it passed on to you (po.escalation events).'),
+      metric('poApproved', 'Requirements you approved', approvals.length, changesAsked.length ? `after asking for changes ${changesAsked.length} time${changesAsked.length === 1 ? '' : 's'}` : null, SOURCE.recorded, 'Recorded requirements.approved events (approval checkpoint), and requirements.changes_requested events when you sent the requirements back to the PO first.'),
       metric('poRefused', 'AI answers refused by its rules', refused('po'), null, SOURCE.recorded, refusedBasis('PO')),
     ],
     dev: [
@@ -368,6 +384,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('devSentBackByPo', 'Sent back by the PO', poRework.length, null, SOURCE.recorded, 'PO → Developer rework handoffs after QA had verified the delivery.'),
       metric('devBugsCode', 'Your bugs traced to its code', bugsFromCode, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the implementation: the requirements were right, the code was wrong.'),
       metric('devCodeDefects', 'Code defects found', fromCode, 'by QA or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the implementation: failed acceptance checks, failing QA tests of things the requirements state, and PO rejection reasons marked "implementation".'),
+      askedMetric('devQuestions', 'Developer', 'dev'),
       metric('devRefused', 'AI answers refused by its rules', refused('dev'), null, SOURCE.recorded, refusedBasis('Developer')),
       metric('devFirstTimeRight', 'Right first time', verifiedWorkflows.length ? firstTimeRight.length / verifiedWorkflows.length : null, verifiedWorkflows.length ? `${firstTimeRight.length} of ${verifiedWorkflows.length} requests` : null, SOURCE.calculated, 'Requests whose first delivery passed QA and was not sent back by the PO, out of the requests QA verified at least once.', 'percent'),
     ],
@@ -377,6 +394,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('qaConcerns', 'Requirement concerns raised', concerns.length, null, SOURCE.recorded, 'Recorded qa.concern events: the requirements may not match your request (AI-powered QA only).'),
       metric('qaEscaped', 'Bugs that got past it', escapedBugs.length, 'you found them after QA had verified the delivery', SOURCE.recorded, 'Bug reports about a product version QA had verified: problems none of the automated checks caught.'),
       metric('qaMissed', 'Passed by QA, rejected by the PO', poRework.length, null, SOURCE.recorded, 'Deliveries QA verified that the PO then rejected: problems the tests did not catch, according to the PO.'),
+      askedMetric('qaQuestions', 'QA', 'qa'),
       metric('qaRefused', 'AI answers refused by its rules', refused('qa'), null, SOURCE.recorded, refusedBasis('QA')),
     ],
   };
@@ -418,6 +436,9 @@ export function shortModel(model) {
  * The setup a request really ran with: for each agent, the model(s) its
  * recorded AI requests used, "scripted" if it worked without AI, or "—".
  */
+/** The version of the team's rules a request ran under (1 before versions were recorded). */
+export const rulesOf = (workflow) => workflow.state?.rules?.version ?? 1;
+
 export function setupOf(workflowId, tasks, events) {
   const setup = {};
   for (const agentId of ['po', 'dev', 'qa']) {
@@ -433,11 +454,12 @@ function compareModels(workflows, tasks, events, allWorkflows = workflows) {
   const groups = new Map();
   for (const w of workflows) {
     const setup = setupOf(w.id, tasks, events);
-    const key = `PO: ${setup.po} · Developer: ${setup.dev} · QA: ${setup.qa}`;
-    if (!groups.has(key)) groups.set(key, { key, setup, workflows: [] });
+    const rules = rulesOf(w);
+    const key = `Rules v${rules} · PO: ${setup.po} · Developer: ${setup.dev} · QA: ${setup.qa}`;
+    if (!groups.has(key)) groups.set(key, { key, setup, rules, workflows: [] });
     groups.get(key).workflows.push(w);
   }
-  return [...groups.values()].map(({ key, setup, workflows: list }) => {
+  return [...groups.values()].map(({ key, setup, rules, workflows: list }) => {
     const ids = new Set(list.map((w) => w.id));
     const of = (type) => events.filter((e) => e.type === type && ids.has(e.workflowId));
     const n = list.length;
@@ -454,7 +476,9 @@ function compareModels(workflows, tasks, events, allWorkflows = workflows) {
     const escaped = allWorkflows.filter((b) => b.state?.requestType === 'bug' && ids.has(b.state?.base?.workflowId) && b.state?.base?.verified);
     return {
       setup: key,
+      rules,
       models: setup,
+      teamQuestionsPerRequest: per(sum(of('team.question').map((e) => e.detail?.questions?.length ?? 0))),
       requests: n,
       verifiedRate: delivered.length ? verified.length / delivered.length : null,
       poQuestionsPerRequest: per(sum(of('po.clarification').map((e) => e.detail?.questions?.length || 1))),

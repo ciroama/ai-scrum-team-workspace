@@ -243,7 +243,49 @@ export const ORIGINS = ['requirements', 'implementation'];
  * Validates the Developer's reply.
  * @returns {{ files: Array<{ path: string, purpose: string, content: string }>, summary: string | null, handoffMessage: string | null }}
  */
-export function validateDevReply(reply) {
+/** At most this many questions a Developer or QA may ask the PO in one round. */
+export const MAX_TEAM_QUESTIONS = 5;
+
+/**
+ * Questions a Developer or QA asks the PO instead of delivering their work.
+ * Only allowed once per piece of work: after the answers they must deliver.
+ * @returns {{ status: 'questions', questions: Array<{ question: string, why: string | null }> } | null}
+ */
+function teamQuestions(reply, canAsk, deliver) {
+  if (reply?.status !== 'questions') return null;
+  if (!canAsk) throw new ContractError([`You already asked your questions for this work and got the answers. Do not ask again: ${deliver}, and record in it what you had to assume.`]);
+  const list = reply.questions;
+  if (!Array.isArray(list) || !list.length || list.length > MAX_TEAM_QUESTIONS || !list.every((q) => isText(q?.question, 600))) {
+    throw new ContractError([`"questions" must be a list of 1–${MAX_TEAM_QUESTIONS} items {"question":"...","why":"why it matters for your work"}.`]);
+  }
+  return { status: 'questions', questions: list.map((q) => ({ question: q.question.trim(), why: isText(q.why, 600) ? q.why.trim() : null })) };
+}
+
+/**
+ * The PO's answers to a Developer's or QA's questions: an answer, or a
+ * decision to pass the question on to the user when only the user can say.
+ * @returns {{ answers: Array<{ question: number, answer: string | null, askUser: boolean, why: string | null }> }}
+ */
+export function validateTeamAnswerReply(reply, { count }) {
+  const problems = [];
+  const answers = Array.isArray(reply?.answers) ? reply.answers : [];
+  const clean = [];
+  for (let i = 1; i <= count; i++) {
+    const a = answers.find((x) => Number(x?.question) === i);
+    if (!a) problems.push(`Answer question ${i}: {"question":${i},"answer":"..."} or {"question":${i},"askUser":true,"why":"why only the user can decide"}.`);
+    else if (a.askUser === true) {
+      if (!isText(a.why, 600)) problems.push(`Question ${i}: say in "why" why only the user can decide it.`);
+      else clean.push({ question: i, answer: null, askUser: true, why: a.why.trim() });
+    } else if (!isText(a.answer, 1500)) problems.push(`Question ${i}: "answer" must be a non-empty text, or set "askUser": true.`);
+    else clean.push({ question: i, answer: a.answer.trim(), askUser: false, why: null });
+  }
+  if (problems.length) throw new ContractError(problems);
+  return { answers: clean };
+}
+
+export function validateDevReply(reply, { canAsk = false } = {}) {
+  const asked = teamQuestions(reply, canAsk, 'deliver the files now');
+  if (asked) return asked;
   const problems = [];
   const files = reply.files;
   if (!Array.isArray(files) || !files.length) {
@@ -298,7 +340,9 @@ function syntaxError(source) {
  * modules and makes sure they parse.
  * @returns {{ testFile: string, tests: number, concerns: string[], summary: string | null }}
  */
-export function validateQaReply(reply) {
+export function validateQaReply(reply, { canAsk = false } = {}) {
+  const asked = teamQuestions(reply, canAsk, 'write your tests now');
+  if (asked) return asked;
   const problems = [];
   const source = reply.testFile;
   if (typeof source !== 'string' || !source.trim()) problems.push('"testFile" (an ES module using node:test) is required.');

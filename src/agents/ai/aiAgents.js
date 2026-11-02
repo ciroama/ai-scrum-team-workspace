@@ -13,7 +13,7 @@
 import { Agent, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
-import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply } from '../../ai/contracts.js';
+import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, MAX_TEAM_QUESTIONS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply, validateTeamAnswerReply } from '../../ai/contracts.js';
 import { QaAgent } from '../qa.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
@@ -21,6 +21,19 @@ export const AI_WEB_RECIPE_ID = 'ai-static-web';
 const PRODUCT_SCOPE =
   'The team builds static web pages only: HTML, CSS and browser JavaScript, opened from index.html, ' +
   'with no server, no build step, no frameworks to install and no external resources (no CDNs, no web fonts, no images from the internet).';
+
+/** What a Developer or QA is told about asking the PO before doing its work. */
+function askingRules(canAsk, deliverWhat) {
+  return canAsk
+    ? [
+        `You may ask the PO questions before you ${deliverWhat}, once for this piece of work. Ask when something you need is missing, vague or contradictory in the requirements and the answer would change what you do.`,
+        `To ask, answer instead with {"status":"questions","questions":[{"question":"...","why":"what it changes in your work"}]} (at most ${MAX_TEAM_QUESTIONS}). The PO answers, or passes the question on to the user. Do not ask about things you can reasonably decide yourself.`,
+      ]
+    : ['You have already asked the PO your questions for this piece of work (the answers are in "teamClarifications"), or asking is not possible now: do not ask again.'];
+}
+
+/** The answers the team already got to its questions, for every agent that works on the request. */
+const clarificationsFor = (teamClarifications) => (teamClarifications?.length ? { teamClarifications: teamClarifications.map(({ from, question, answer, answeredBy }) => ({ askedBy: from === 'dev' ? 'Developer' : 'QA', question, answer, answeredBy: answeredBy === 'user' ? 'the user' : 'the PO' })) } : {});
 
 /**
  * Calls the model, validates the reply, and retries once with the
@@ -182,7 +195,7 @@ export class AiProductOwnerAgent extends Agent {
    * whether the code is right is for QA to show. Guard: it may reject a
    * product whose tests pass, but cannot accept one QA did not verify.
    */
-  async review({ spec, verification, previousRejections = [] }) {
+  async review({ spec, verification, previousRejections = [], teamClarifications = [] }) {
     const evidence = this.rules.review({ spec, verification });
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
@@ -214,6 +227,7 @@ export class AiProductOwnerAgent extends Agent {
               qaConcerns: verification.concerns ?? [],
             }
           : { executed: false },
+        ...clarificationsFor(teamClarifications),
         ...(previousRejections.length ? { yourPreviousRejections: previousRejections } : {}),
       },
       null,
@@ -235,6 +249,43 @@ export class AiProductOwnerAgent extends Agent {
       decidedBy: 'ai',
       aiCalls,
     };
+  }
+
+  /**
+   * Answers the questions a Developer or QA asked before doing their work,
+   * from the request, the agreed requirements and what the user already
+   * said. What only the user can decide is passed on to the user.
+   */
+  async answerTeam({ spec, from, questions, dialogue = [], teamClarifications = [] }) {
+    const asker = from === 'dev' ? 'Developer' : 'QA';
+    const system = [
+      'You are the Product Owner (PO) of a small software team.',
+      `The ${asker} asked you questions before doing their work. Answer each one as the PO: from the user's request, the agreed requirements, the assumptions and everything the user already told you.`,
+      '- Answer yourself when the answer follows from what is agreed, or is a product detail the user left to you ("you decide").',
+      '- Pass a question on to the user ("askUser": true) when only the user can decide it: it changes what the user gets and nothing agreed so far settles it. Say why in "why".',
+      '- Do not invent requirements the user never asked for. Keep answers short and concrete.',
+      'Answer with a JSON object only: {"answers":[{"question":1,"answer":"..."},{"question":2,"askUser":true,"why":"..."}]}',
+    ].join('\n');
+    const user = JSON.stringify(
+      {
+        request: spec.requestText,
+        requirements: spec.requirements,
+        acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
+        assumptions: spec.assumptions ?? [],
+        clarificationDialogueWithUser: dialogue,
+        ...clarificationsFor(teamClarifications),
+        [`questionsFrom${asker === 'QA' ? 'QA' : 'Developer'}`]: questions.map((q, i) => ({ number: i + 1, ...q })),
+      },
+      null,
+      2,
+    );
+    const { value, aiCalls } = await askWithContract(this.getClient, {
+      system,
+      user,
+      validate: (reply) => validateTeamAnswerReply(reply, { count: questions.length }),
+      purpose: `answer the ${asker}'s questions`,
+    });
+    return { answers: value.answers, decidedBy: 'ai', aiCalls };
   }
 }
 
@@ -278,7 +329,7 @@ export class AiDeveloperAgent extends Agent {
     this.getClient = getClient;
   }
 
-  async implement({ spec, attempt, defects = [], currentFiles = [], change = null }) {
+  async implement({ spec, attempt, defects = [], currentFiles = [], change = null, canAsk = false, teamClarifications = [] }) {
     const correcting = defects.length > 0;
     const system = [
       'You are the Developer of a small software team.',
@@ -294,6 +345,7 @@ export class AiDeveloperAgent extends Agent {
       '- Every text a criterion requires must be present in the HTML itself, not only added by JavaScript.',
       '- Keep behaviour testable without a browser: put rules, state changes and calculations in plain functions in a .js file, and at its end export them for Node with: if (typeof module !== "undefined") module.exports = { ... }; QA may test them.',
       '- Use exactly the CSS values stated in the checks (for example the same colour name).',
+      ...askingRules(canAsk, 'write the code'),
       'Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"}',
     ].join('\n');
     const user = JSON.stringify(
@@ -303,6 +355,7 @@ export class AiDeveloperAgent extends Agent {
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria,
         attempt,
+        ...clarificationsFor(teamClarifications),
         ...(change && !correcting ? { changesToRequirements: spec.changes ?? [], currentFiles: currentFiles.map((f) => ({ path: f.path, content: f.content })) } : {}),
         ...(correcting
           ? {
@@ -322,10 +375,12 @@ export class AiDeveloperAgent extends Agent {
         : change
           ? `Change the existing product to meet the updated requirements:\n${user}`
           : `Implement this:\n${user}`,
-      validate: validateDevReply,
+      validate: (reply) => validateDevReply(reply, { canAsk }),
       purpose: correcting ? (defects.some((d) => d.reportedBy === 'PO') ? "rework what the PO rejected" : 'fix the reported defects') : change ? 'implement the change request' : 'implement the requirements',
     });
+    if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
     return {
+      status: 'delivered',
       files: value.files,
       summary:
         value.summary ??
@@ -361,7 +416,7 @@ export class AiQaAgent extends Agent {
     this.rules = scripted;
   }
 
-  async planVerification({ spec, implementation, dialogue = [], files = [] }) {
+  async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [] }) {
     const base = this.rules.planVerification({ spec, implementation });
     const system = [
       'You are the QA engineer of a small software team. The deterministic acceptance tests for the PO\'s criteria already exist and always run.',
@@ -375,6 +430,7 @@ export class AiQaAgent extends Agent {
       '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
       'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
       'List in "requestOnly" the names of your tests that check something the user asked (in the request or the answers) that the agreed requirements do not state: if such a test fails, the requirements missed it too.',
+      ...askingRules(canAsk, 'write your tests'),
       'Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>","requestOnly":["QA-AI: ..."],"concerns":["a requirement that may not match the request, and why"]}',
     ].join('\n');
     const user = JSON.stringify(
@@ -384,12 +440,14 @@ export class AiQaAgent extends Agent {
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
         assumptions: spec.assumptions ?? [],
+        ...clarificationsFor(teamClarifications),
         files: files.map((f) => ({ path: f.path, content: f.content })),
       },
       null,
       2,
     );
-    const { value, aiCalls } = await askWithContract(this.getClient, { system, user, validate: validateQaReply, purpose: 'write QA tests from the request' });
+    const { value, aiCalls } = await askWithContract(this.getClient, { system, user, validate: (reply) => validateQaReply(reply, { canAsk }), purpose: 'write QA tests from the request' });
+    if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
     return {
       ...base,
       summary: `${base.summary} Plus ${value.tests} test${value.tests === 1 ? '' : 's'} of its own from your request${value.summary ? `: ${value.summary}` : '.'}`,

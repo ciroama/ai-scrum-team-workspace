@@ -231,11 +231,24 @@ export function stageStates(state, detail) {
   });
 }
 
+/** What the team is waiting for from you, when a request is paused. */
+export function waitingFor(workflow) {
+  const st = workflow.state || {};
+  if (st.waitingFor === 'approval') {
+    return { short: 'Waiting for your approval', title: 'Approve the requirements', text: "Read the PO's requirements above. Approve them to start development, or write in the box below what to change." };
+  }
+  if (st.waitingFor === 'team') {
+    const who = st.teamQuestions && st.teamQuestions.from === 'qa' ? 'QA' : 'The Developer';
+    return { short: 'Waiting for your answer', title: `${who} asked something only you can decide`, text: 'The PO passed the question on to you. Answer it in the box below to continue this request.' };
+  }
+  return { short: 'Waiting for your answer', title: 'The PO asked you a question', text: `${st.clarification ? st.clarification.message : ''} Answer it in the box below to continue this request.` };
+}
+
 export function outcomeStep(state, workflow) {
   const map = {
     completed: ['done', workflow.verified ? 'Completed · verified' : 'Completed'],
     failed: ['failed', 'Failed'],
-    needs_clarification: ['blocked', 'Waiting for your answer'],
+    needs_clarification: ['blocked', waitingFor(workflow).short],
     cancelled: ['skipped', 'Cancelled'],
     interrupted: ['interrupted', 'Interrupted'],
     blocked: ['blocked', 'Blocked'],
@@ -255,7 +268,7 @@ export function verificationBadge(workflow) {
   }
   if (['running'].includes(workflow.status)) return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Verification pending');
   // Nothing was built yet: there is nothing to verify.
-  if (workflow.status === 'needs_clarification') return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Waiting for your answer');
+  if (workflow.status === 'needs_clarification') return h('span', { className: 'status-pill', dataset: { status: 'none' } }, waitingFor(workflow).short);
   return h('span', { className: 'status-pill', dataset: { status: 'unverified' } }, 'Not verified');
 }
 
@@ -287,11 +300,15 @@ export function progressBanner(state, workflow, ui, actions) {
     );
   }
   if (workflow.status === 'needs_clarification') {
-    const clarification = workflow.state && workflow.state.clarification;
+    const waiting = waitingFor(workflow);
+    const approval = workflow.state && workflow.state.waitingFor === 'approval';
     return h(
       'div',
       { className: 'banner', dataset: { tone: 'warning' } },
-      h('div', { className: 'banner-text' }, h('strong', null, 'The PO asked you a question'), clarification ? clarification.message : '', ' Answer it in the box below to continue this request.'),
+      h('div', { className: 'banner-text' }, h('strong', null, waiting.title), waiting.text),
+      approval
+        ? h('div', { className: 'banner-actions' }, h('button', { type: 'button', className: 'btn btn-primary btn-sm', disabled: busy, onclick: () => actions.approve(workflow.id) }, 'Approve requirements'))
+        : null,
     );
   }
   if (workflow.status === 'failed') {
@@ -485,8 +502,8 @@ function outcomeCard(state, detail) {
       break;
     case 'needs_clarification':
       tone = 'warning';
-      title = 'Waiting for your answer to the PO';
-      text = st.clarification ? st.clarification.message : 'The PO needs clarification.';
+      title = waitingFor(workflow).title;
+      text = waitingFor(workflow).text;
       break;
     case 'interrupted':
       tone = 'warning';

@@ -77,8 +77,9 @@ async function refresh() {
   refreshing = true;
   try {
     state = await api('/api/state');
-    // Work in progress (running or blocked) is shown on opening, not hidden.
-    if (!ui.loaded && state.activeWorkflowId) ui.blank = false;
+    // Work in progress (running or blocked), or a request waiting for you, is shown on opening, not hidden.
+    const focus = state.workflows.find((w) => w.id === state.focusWorkflowId);
+    if (!ui.loaded && (state.activeWorkflowId || (focus && focus.status === 'needs_clarification'))) ui.blank = false;
     ui.loaded = true;
     if (ui.blank) {
       ui.selectedId = null;
@@ -149,7 +150,7 @@ const actions = {
       if (counter) counter.textContent = '0 / 2000';
       ui.selectedId = workflow.id;
       ui.pinned = false;
-      const started = { tone: 'success', text: ui.answering ? 'Answer sent. The PO continues this request.' : 'Workflow started. Follow the team in the conversation above.' };
+      const started = { tone: 'success', text: ui.answering ? 'Sent. The team continues this request.' : 'Workflow started. Follow the team in the conversation above.' };
       ui.feedback = started;
       setTimeout(() => {
         if (ui.feedback === started) {
@@ -232,6 +233,19 @@ const actions = {
 
   async resume(workflowId) {
     await workflowAction(workflowId, 'resume');
+  },
+
+  async approve(workflowId) {
+    await workflowAction(workflowId, 'approve');
+  },
+
+  async setTeamRules(changes) {
+    try {
+      await api('/api/team-rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+    } catch (error) {
+      showError(error.message);
+    }
+    await refresh();
   },
 
   async cancel(workflowId) {

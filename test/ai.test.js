@@ -4,7 +4,9 @@ import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startServer } from '../src/server/app.js';
 import { ClaudeCodeClient, parseJsonReply } from '../src/ai/claudeCode.js';
-import { validateDevReply, validatePoReply } from '../src/ai/contracts.js';
+import { validateDevReply, validatePoReply, validateTeamAnswerReply } from '../src/ai/contracts.js';
+import { ProductOwnerAgent } from '../src/agents/productOwner.js';
+import { requestsCsv } from '../src/analytics/export.js';
 import { computeAnalytics } from '../src/analytics/analytics.js';
 import { gitAvailable, tempDir } from './helpers.js';
 
@@ -747,4 +749,120 @@ test('PO contract: a product of many versions fits, and the error says what is w
   assert.equal(validatePoReply(reply(20, 15), { firstRound: false }).requirements.length, 20);
   assert.throws(() => validatePoReply(reply(41), { firstRound: false }), /1–40 strings \(it has 41\)/);
   assert.throws(() => validatePoReply({ ...reply(1), requirements: ['x'.repeat(1001)] }, { firstRound: false }), /requirements\[0\] must be a non-empty string of at most 1000/);
+});
+
+// ---- Team rules v2: the Developer and QA ask the PO; the user approves the requirements ----
+
+const DEV_ASKS = { content: { status: 'questions', questions: [{ question: 'Which font should the phrase use?', why: 'The requirements give no font.' }] } };
+const PO_ANSWERS = { content: { answers: [{ question: 1, answer: 'Use the default sans-serif font.' }] } };
+
+test('the Developer asks the PO before coding; the answer reaches the Developer and the review; it can ask only once', async (t) => {
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, DEV_ASKS, PO_ANSWERS, DEV_ASKS, { content: page('red') }, ACCEPT]);
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed');
+  assert.deepEqual(workflow.state.rules, { version: 2, approval: false });
+
+  const question = events.find((e) => e.type === 'team.question');
+  assert.equal(question.actor, 'dev');
+  assert.equal(question.to, 'po');
+  assert.equal(question.detail.questions[0].question, 'Which font should the phrase use?');
+  const answer = events.find((e) => e.type === 'team.answer');
+  assert.equal(answer.actor, 'po');
+  assert.equal(answer.to, 'dev');
+  assert.deepEqual(answer.detail.answers, [{ question: 'Which font should the phrase use?', answer: 'Use the default sans-serif font.' }]);
+
+  const received = await claude.received();
+  assert.match(option(received[1].args, '--system-prompt'), /You may ask the PO questions before you write the code/);
+  assert.match(option(received[2].args, '--system-prompt'), /Product Owner[\s\S]*The Developer asked you questions/);
+  const devAgain = JSON.parse(received[3].stdin.slice(received[3].stdin.indexOf('{')));
+  assert.deepEqual(devAgain.teamClarifications, [{ askedBy: 'Developer', question: 'Which font should the phrase use?', answer: 'Use the default sans-serif font.', answeredBy: 'the PO' }]);
+  assert.match(option(received[3].args, '--system-prompt'), /do not ask again/);
+  // Asking a second time is refused: the Developer had to deliver.
+  assert.match(received[4].stdin, /You already asked your questions/);
+  assert.equal(JSON.parse(received[5].stdin).teamClarifications.length, 1, 'the PO review sees the answers too');
+
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  const value = (list, key) => list.find((m) => m.key === key);
+  assert.equal(value(p.dev, 'devQuestions').value, 1);
+  assert.equal(value(p.dev, 'devQuestions').detail, '1 time it stopped · 1 answered by the PO · 0 passed on to you');
+  assert.equal(value(p.po, 'poTeamAnswered').value, 1);
+  assert.equal(value(p.dev, 'devRefused').value, 1, 'the second question round was refused');
+  const csv = requestsCsv(app.repository.analyticsSource(), {});
+  const [header, row] = csv.replace(/^﻿/, '').trim().split('\r\n');
+  const col = (name) => row.split(',')[header.split(',').indexOf(name)];
+  assert.equal(col('team rules'), 'v2');
+  assert.equal(col('Developer questions'), '1');
+  assert.equal(col('team questions answered by the PO'), '1');
+});
+
+test('QA asks the PO; what only the user can decide is passed on to the user, and the work continues', async (t) => {
+  const qaAsks = { content: { status: 'questions', questions: [{ question: 'Must the phrase stay centred on small screens too?', why: 'It decides which sizes I test.' }] } };
+  const poPassesOn = { content: { answers: [{ question: 1, askUser: true, why: 'The user never said which screens matter.' }] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, qaAsks, poPassesOn, PASSING_QA, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'needs_clarification');
+  assert.equal(workflow.state.waitingFor, 'team');
+  const escalation = events.find((e) => e.type === 'po.escalation');
+  assert.equal(escalation.to, 'user');
+  assert.equal(escalation.detail.for, 'qa');
+  assert.equal(escalation.detail.questions[0].poWhy, 'The user never said which screens matter.');
+  const state = await (await fetch(`${app.url}/api/state`)).json();
+  assert.equal(state.workflows.find((w) => w.id === workflow.id).waitingFor, 'team');
+
+  const done = await app.orchestrator.answer(workflow.id, 'Yes, on phones too.').done;
+  assert.equal(done.status, 'completed');
+  const answered = app.repository.listEvents(workflow.id).find((e) => e.type === 'team.answered');
+  assert.equal(answered.to, 'qa');
+  const received = await claude.received();
+  assert.deepEqual(JSON.parse(received[4].stdin).teamClarifications, [{ askedBy: 'QA', question: 'Must the phrase stay centred on small screens too?', answer: 'Yes, on phones too.', answeredBy: 'the user' }]);
+
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.equal(p.qa.find((m) => m.key === 'qaQuestions').detail, '1 time it stopped · 0 answered by the PO · 1 passed on to you');
+  assert.equal(p.po.find((m) => m.key === 'poTeamAnswered').detail, '1 passed on to you');
+  assert.equal(p.po.find((m) => m.key === 'poAnswers').value, 0, 'an answer to a teammate is not an answer to the PO');
+});
+
+test('approval checkpoint: the Developer starts only after the user approves; changes go back to the PO', async (t) => {
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: PO_SPEC }, { content: page('red') }, ACCEPT]);
+  assert.deepEqual(await (await fetch(`${app.url}/api/team-rules`, json('PUT', { requireApproval: true }))).json(), { requireApproval: true });
+  assert.equal((await fetch(`${app.url}/api/team-rules`, json('PUT', { requireApproval: 'yes' }))).status, 400);
+  assert.equal((await (await fetch(`${app.url}/api/state`)).json()).teamRules.requireApproval, true);
+
+  const { workflow } = await run(app);
+  assert.equal(workflow.status, 'needs_clarification');
+  assert.equal(workflow.state.waitingFor, 'approval');
+  assert.equal((await claude.received()).length, 1, 'nothing is built before the approval');
+  assert.ok(!app.repository.listEvents(workflow.id).some((e) => e.type === 'handoff'), 'no handoff to the Developer yet');
+
+  // Asking for changes: the PO rewrites the requirements with them, then waits again.
+  const again = await app.orchestrator.answer(workflow.id, 'Make the phrase bigger.').done;
+  assert.equal(again.state.waitingFor, 'approval');
+  assert.match((await claude.received())[1].stdin, /Do you approve these requirements \(version 1\)\?\n {3}User: Make the phrase bigger\./);
+
+  const approved = await fetch(`${app.url}/api/workflows/${workflow.id}/approve`, { method: 'POST' });
+  assert.equal(approved.status, 200);
+  await app.orchestrator.current?.promise;
+  const final = app.repository.getWorkflow(workflow.id);
+  assert.equal(final.status, 'completed');
+  assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/approve`, { method: 'POST' })).status, 409);
+  const events = app.repository.listEvents(workflow.id);
+  const order = events.filter((e) => ['requirements.changes_requested', 'requirements.approved', 'handoff'].includes(e.type)).map((e) => e.type);
+  assert.deepEqual(order.slice(0, 3), ['requirements.changes_requested', 'requirements.approved', 'handoff']);
+
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.equal(p.po.find((m) => m.key === 'poApproved').value, 1);
+  assert.equal(p.po.find((m) => m.key === 'poApproved').detail, 'after asking for changes 1 time');
+  assert.equal(p.po.find((m) => m.key === 'poAssumptions').value, 1, 'only the agreed (last) requirements count');
+});
+
+test('contracts: questions only once; the PO answers every question or passes it on with a reason; a scripted PO passes everything on', () => {
+  const ask = { status: 'questions', questions: [{ question: 'Which font?' }] };
+  assert.deepEqual(validateDevReply(ask, { canAsk: true }), { status: 'questions', questions: [{ question: 'Which font?', why: null }] });
+  assert.throws(() => validateDevReply(ask, { canAsk: false }), /already asked/);
+  assert.throws(() => validateDevReply({ status: 'questions', questions: [] }, { canAsk: true }), /1–5 items/);
+  assert.throws(() => validateTeamAnswerReply({ answers: [{ question: 1, answer: 'x' }] }, { count: 2 }), /Answer question 2/);
+  assert.throws(() => validateTeamAnswerReply({ answers: [{ question: 1, askUser: true }] }, { count: 1 }), /why only the user can decide/);
+  assert.deepEqual(validateTeamAnswerReply({ answers: [{ question: 1, askUser: true, why: 'Taste.' }] }, { count: 1 }).answers, [{ question: 1, answer: null, askUser: true, why: 'Taste.' }]);
+  const scripted = new ProductOwnerAgent().answerTeam({ questions: [{ question: 'a' }, { question: 'b' }] });
+  assert.ok(scripted.answers.every((a) => a.askUser));
 });

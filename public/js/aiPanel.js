@@ -44,6 +44,12 @@ export function mountAiPanel(state, actions) {
       ),
       h('div', { id: 'ai-status', className: 'ai-status', role: 'status', 'aria-live': 'polite' }),
       h(
+        'label',
+        { className: 'team-rule' },
+        h('input', { type: 'checkbox', id: 'require-approval', checked: Boolean(state.teamRules && state.teamRules.requireApproval), onchange: (e) => actions.setTeamRules({ requireApproval: e.target.checked }) }),
+        h('span', null, h('strong', null, 'You approve the requirements'), ' before the Developer starts. The PO waits for you; you can approve or ask for changes. The Developer and QA can always ask the PO questions, and the PO passes on to you what only you can decide.'),
+      ),
+      h(
         'details',
         { className: 'disclosure' },
         h('summary', null, 'How to set up Claude Code'),

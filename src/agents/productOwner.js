@@ -157,4 +157,15 @@ export class ProductOwnerAgent extends ScriptedAgent {
         : `Not accepted: acceptance criteria ${unmet.join(', ')} are not met according to QA's verification.`,
     };
   }
+
+  /**
+   * A scripted PO knows only its recipe, so it cannot judge a teammate's
+   * question: it passes every question on to the user.
+   */
+  answerTeam({ questions }) {
+    return {
+      answers: questions.map((_q, i) => ({ question: i + 1, answer: null, askUser: true, why: 'The scripted PO only knows its recipe and cannot judge this question.' })),
+      decidedBy: 'rule',
+    };
+  }
 }

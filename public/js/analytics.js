@@ -213,6 +213,7 @@ function modelTable(data) {
     ['Requests', (g) => String(g.requests), 'Requests run with this setup'],
     ['Verified', (g) => pct(g.verifiedRate), 'Completed and verified, out of the requests that reached an outcome'],
     ['Questions', (g) => num(g.poQuestionsPerRequest), 'PO questions per request'],
+    ['Team questions', (g) => num(g.teamQuestionsPerRequest), 'Questions the Developer and QA asked the PO, per request (team rules v2)'],
     ['Defects', (g) => num(g.defectsPerRequest), 'Defects found per request'],
     ['Rework', (g) => num(g.reworkPerRequest), 'Verified work the PO sent back, per request'],
     ['1st time right', (g) => pct(g.firstTimeRight), 'Requests whose first delivery passed QA and the PO'],
@@ -239,7 +240,7 @@ function modelTable(data) {
             null,
             h('th', null, 'Team setup'),
             data.modelComparison.map((g) =>
-              h('th', { className: 'num' }, h('span', { className: 'setup' }, `PO ${g.models.po}`), h('span', { className: 'setup' }, `Dev ${g.models.dev}`), h('span', { className: 'setup' }, `QA ${g.models.qa}`)),
+              h('th', { className: 'num' }, h('span', { className: 'setup' }, `Rules v${g.rules}`), h('span', { className: 'setup' }, `PO ${g.models.po}`), h('span', { className: 'setup' }, `Dev ${g.models.dev}`), h('span', { className: 'setup' }, `QA ${g.models.qa}`)),
             ),
           ),
         ),

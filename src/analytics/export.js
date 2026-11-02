@@ -2,7 +2,7 @@
 // use the same records and the same filters as the page: the statistics as
 // shown, one row per request, and one row per agent task.
 
-import { computeAnalytics, selectWorkflows, setupOf } from './analytics.js';
+import { computeAnalytics, rulesOf, selectWorkflows, setupOf } from './analytics.js';
 
 /**
  * One CSV cell. Text that a spreadsheet would run as a formula (starting
@@ -38,6 +38,7 @@ export function statisticsCsv(source, filter, catalogue) {
       ['Requests', g.requests, 'count'],
       ['Completed and verified', g.verifiedRate, 'fraction 0-1'],
       ['PO questions per request', g.poQuestionsPerRequest, 'count'],
+      ['Developer and QA questions per request', g.teamQuestionsPerRequest, 'count'],
       ['Defects per request', g.defectsPerRequest, 'count'],
       ['PO rework per request', g.reworkPerRequest, 'count'],
       ['Right first time', g.firstTimeRight, 'fraction 0-1'],
@@ -96,6 +97,7 @@ export function requestsCsv(source, filter) {
   });
   return toCsv(rows, [
     ['request id', (r) => r.w.id],
+    ['team rules', (r) => `v${rulesOf(r.w)}`],
     ['PO model', (r) => r.setup.po],
     ['Developer model', (r) => r.setup.dev],
     ['QA model', (r) => r.setup.qa],
@@ -117,6 +119,12 @@ export function requestsCsv(source, filter) {
     ['assumptions decided by the PO', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy === 'po').length : null)],
     ['PO went ahead without asking', (r) => (r.spec ? eventsOf(r.w.id, 'po.requirements').some((e) => e.detail?.whyNoQuestions) : null)],
     ['your answers', (r) => eventsOf(r.w.id, 'clarification.answered').length],
+    ['requirements approved by you', (r) => (r.w.state?.rules?.approval ? eventsOf(r.w.id, 'requirements.approved').length > 0 : null)],
+    ['changes you asked to the requirements', (r) => (r.w.state?.rules?.approval ? eventsOf(r.w.id, 'requirements.changes_requested').length : null)],
+    ['Developer questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'dev').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
+    ['QA questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'qa').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
+    ['team questions answered by the PO', (r) => eventsOf(r.w.id, 'team.answer').reduce((n, e) => n + (e.detail?.answers?.length ?? 0), 0)],
+    ['team questions passed on to you', (r) => eventsOf(r.w.id, 'po.escalation').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
     ['requirements version', (r) => r.spec?.version ?? null],
     ['requirements', (r) => r.spec?.requirements.length ?? null],
     ['acceptance criteria', (r) => r.spec?.acceptanceCriteria.length ?? null],

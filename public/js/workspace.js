@@ -368,7 +368,7 @@ function conversationItems(state, detail, ui, actions) {
             d.decidedBy === 'rule'
               ? h('p', { className: 'muted small' }, 'Acceptance rule, not an AI decision: the PO accepts only when QA has verified every criterion.')
               : d.decidedBy === 'ai'
-                ? h('p', { className: 'muted small' }, 'Decided by the AI-powered PO after reading the files and QA\'s evidence. It can reject a product whose tests pass, but cannot accept one that QA did not verify.')
+                ? h('p', { className: 'muted small' }, 'Decided by the AI-powered PO from your request, the requirements and QA\'s evidence (it does not read the code). It can reject a product whose tests pass, but cannot accept one that QA did not verify.')
                 : null,
           ),
         );
@@ -392,6 +392,61 @@ function conversationItems(state, detail, ui, actions) {
         if (event === lastBlocked && workflow.status === 'blocked') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
         else items.push(note(event));
         break;
+      case 'team.question':
+        items.push(
+          agentMessage(state, event, [
+            h('p', null, event.summary),
+            h('ol', { className: 'plan' }, (d.questions || []).map((q, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('strong', null, q.question), q.why ? h('span', { className: 'muted small', style: 'display:block' }, `Why it matters: ${q.why}`) : null)))),
+          ]),
+        );
+        break;
+      case 'team.answer':
+        items.push(
+          agentMessage(state, event, [
+            h('p', null, event.summary),
+            h('ol', { className: 'plan' }, (d.answers || []).map((a, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('span', { className: 'muted', style: 'display:block' }, a.question), a.answer)))),
+          ]),
+        );
+        break;
+      case 'po.escalation':
+        items.push(
+          agentMessage(
+            state,
+            event,
+            [
+              h('p', null, event.summary),
+              h('ol', { className: 'plan' }, (d.questions || []).map((q, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('strong', null, q.question), q.poWhy ? h('span', { className: 'muted small', style: 'display:block' }, `Why the PO asks you: ${q.poWhy}`) : null)))),
+            ],
+            workflow.status === 'needs_clarification' && event === last(events.filter((e) => e.type === 'po.escalation'))
+              ? h('p', { className: 'muted small', style: 'margin-top:10px' }, 'Waiting for your answer: write it in the box below.')
+              : null,
+          ),
+        );
+        break;
+      case 'team.answered':
+        items.push(h(
+            'li',
+            { className: 'msg msg-user' },
+            avatarFor('user'),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', { className: 'muted small' }, `Answer to the ${d.for === 'qa' ? 'QA' : 'Developer'}`), h('p', null, d.answer)),
+          ));
+        break;
+      case 'requirements.approved':
+        items.push(h(
+            'li',
+            { className: 'msg msg-user' },
+            avatarFor('user'),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', { className: 'muted small' }, 'Requirements'), h('p', null, `✓ Approved (version ${d.version ?? '?'}). The Developer can start.`)),
+          ));
+        break;
+      case 'requirements.changes_requested':
+        items.push(h(
+            'li',
+            { className: 'msg msg-user' },
+            avatarFor('user'),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', { className: 'muted small' }, 'Changes to the requirements'), h('p', null, d.answer)),
+          ));
+        break;
       case 'clarification.answered':
         items.push(
           h(
@@ -408,6 +463,7 @@ function conversationItems(state, detail, ui, actions) {
       case 'workflow.completed':
       case 'workflow.failed':
       case 'workflow.needs_clarification':
+      case 'requirements.awaiting_approval':
       case 'workflow.interrupted':
       case 'agent.enabled':
       case 'agent.disabled':
@@ -423,6 +479,7 @@ function conversationItems(state, detail, ui, actions) {
   }
 
   if (workflow.status === 'interrupted') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
+  if (workflow.status === 'needs_clarification' && workflow.state && workflow.state.waitingFor === 'approval') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
   const running = tasks.find((t) => t.status === 'running');
   if (running) {
     items.push(h('li', { className: 'live-line' }, h('span', { className: 'dot' }), `${agentLabel(state, running.agentId)} is working: ${running.title.toLowerCase()}…`));
@@ -466,16 +523,21 @@ export function renderComposer(state, ui, actions) {
 
   const target = state.products.find((p) => p.id === ui.targetProductId) || null;
   if (ui.answering) {
+    const waiting = (state.workflows.find((w) => w.id === ui.answering) || {}).waitingFor;
+    const text = {
+      approval: ['Ask for changes to the requirements', 'What should the PO change in the requirements? (Or click "Approve requirements" above.)', 'Ask for changes', 'The PO is waiting for your approval. Approve the requirements above, or write what to change: the PO rewrites them and asks you again.'],
+      team: ['Answer the team\'s question', 'Your answer to the question the PO passed on to you. It continues this same request.', 'Send answer', 'A teammate asked something only you can decide. Your answer goes to them and to the PO, and the work continues.'],
+    }[waiting] || ["Answer the PO's question", "Your answer to the PO's question. It continues this same request.", 'Send answer', 'The PO is waiting for your answer. Answering continues this request; the PO sees its questions and all your answers.'];
     mount(
       'product-target',
-      h('option', { value: '__answer', selected: true }, "Answer the PO's question"),
+      h('option', { value: '__answer', selected: true }, text[0]),
       h('option', { value: '' }, 'A new product'),
       state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id }, `Change: ${p.title} (v${p.versions})`)),
     );
-    input.placeholder = "Your answer to the PO's question. It continues this same request.";
-    button.firstChild.textContent = ui.submitting ? 'Sending…' : 'Send answer';
+    input.placeholder = text[1];
+    button.firstChild.textContent = ui.submitting ? 'Sending…' : text[2];
     mount('workspace-kind', state.agents.some((a) => a.mode === 'ai') ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
-    mount('supported', 'The PO is waiting for your answer. Answering continues this request; the PO sees its questions and all your answers.');
+    mount('supported', text[3]);
     return finishComposer(state, ui, active);
   }
   mount(

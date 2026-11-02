@@ -404,7 +404,8 @@ export class Repository extends EventEmitter {
          WHERE workflow_id IS NOT NULL
            AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call',
                         'po.clarification', 'clarification.answered', 'qa.concern', 'qa.verdict', 'defect.reported',
-                        'po.review', 'po.requirements', 'qa.ai-tests')
+                        'po.review', 'po.requirements', 'qa.ai-tests', 'team.question', 'team.answer',
+                        'po.escalation', 'team.answered', 'requirements.approved', 'requirements.changes_requested')
          ORDER BY id`,
       )
       .all()

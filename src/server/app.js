@@ -82,12 +82,18 @@ function statusFor(error) {
  * @param {number} [options.previewPort]  0 (default) picks a free port
  * @param {string} [options.claudeBinary]  the `claude` command (overridable for tests)
  */
-export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBinary }) {
+export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBinary, approvalByDefault = false }) {
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
   const aiSettings = new AiSettings({ repository, ...(claudeBinary ? { binary: claudeBinary } : {}) });
   team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: (agentId) => aiSettings.client(repository.getAgentModel(agentId)) });
-  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary, modelOf: (agentId) => repository.getAgentModel(agentId) || aiSettings.model });
+  // Whether the user approves the requirements before development starts (Team page).
+  const APPROVAL_KEY = 'team.requireApproval';
+  const requireApproval = () => {
+    const value = repository.getSetting(APPROVAL_KEY);
+    return value == null ? approvalByDefault : value === 'on';
+  };
+  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary, modelOf: (agentId) => repository.getAgentModel(agentId) || aiSettings.model, requireApproval });
   orchestrator.init();
 
   /** Finds a workflow's product folder and the page the preview opens. */
@@ -140,6 +146,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       workflows: repository.listWorkflows({ limit: 500 }).map(({ state: wfState, ...summary }) => ({
         ...summary,
         requestType: wfState?.requestType ?? (wfState?.base ? 'change' : null),
+        waitingFor: wfState?.waitingFor ?? null,
       })),
       products: repository.listProducts(),
       focusWorkflowId: focus?.id ?? null,
@@ -148,6 +155,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       git: await orchestrator.git(),
       preview: preview.status(),
       ai: aiSettings.status(),
+      teamRules: { requireApproval: requireApproval() },
       legacyBackup,
     };
   }
@@ -288,6 +296,17 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       async (req, [id]) => {
         const { answer } = await readJsonBody(req);
         return { workflow: orchestrator.answer(id, answer).workflow };
+      },
+    ],
+    ['POST', /^\/api\/workflows\/([\w-]+)\/approve$/, (_req, [id]) => ({ workflow: orchestrator.approve(id).workflow })],
+    [
+      'PUT',
+      /^\/api\/team-rules$/,
+      async (req) => {
+        const { requireApproval: value } = await readJsonBody(req);
+        if (typeof value !== 'boolean') throw new HttpError(400, 'Send "requireApproval": true or false.');
+        repository.setSetting(APPROVAL_KEY, value ? 'on' : 'off');
+        return { requireApproval: requireApproval() };
       },
     ],
     ['POST', /^\/api\/workflows\/([\w-]+)\/cancel$/, (_req, [id]) => ({ workflow: orchestrator.cancel(id) })],
