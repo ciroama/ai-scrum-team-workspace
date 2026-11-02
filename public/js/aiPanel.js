@@ -6,7 +6,13 @@ import { dateTime, h, icon, mount } from './dom.js';
 
 export function mountAiPanel(state, actions) {
   const ai = state.ai;
-  const model = h('input', { id: 'ai-model', type: 'text', spellcheck: 'false', value: ai.model, placeholder: ai.defaultModel, list: 'ai-models' });
+  // A plain list: every model is always visible (a text box with suggestions only shows the ones matching what is typed).
+  const choices = [...new Set([...ai.suggestedModels, ai.model])];
+  const model = h(
+    'select',
+    { id: 'ai-model', className: 'mode-select', onchange: () => actions.saveAi({ model: model.value }) },
+    choices.map((m) => h('option', { value: m, selected: m === ai.model }, m === ai.defaultModel ? `${m} (recommended)` : m)),
+  );
 
   mount(
     'ai-panel',
@@ -26,15 +32,13 @@ export function mountAiPanel(state, actions) {
           className: 'ai-form',
           onsubmit: (e) => {
             e.preventDefault();
-            actions.saveAi({ model: model.value.trim() });
+            actions.saveAi({ model: model.value });
           },
         },
         h('label', null, h('span', null, 'Default model for every AI-powered agent (sonnet uses less of the subscription limit than opus; haiku uses the least)'), model),
-        h('datalist', { id: 'ai-models' }, ai.suggestedModels.map((m) => h('option', { value: m }))),
         h(
           'div',
           { className: 'ai-actions' },
-          h('button', { type: 'submit', className: 'btn btn-primary btn-sm' }, 'Save'),
           h('button', { type: 'button', className: 'btn btn-sm', onclick: () => actions.testAi() }, 'Test connection'),
         ),
       ),
