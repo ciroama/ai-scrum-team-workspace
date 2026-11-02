@@ -44,6 +44,7 @@ export function statisticsCsv(source, filter, catalogue) {
       ['AI requests per request', g.aiRequestsPerRequest, 'count'],
       ['Tokens per request', g.tokensPerRequest, 'count'],
       ['Average completion time', g.averageCompletionMs, 'ms'],
+      ['Bugs you found later, per verified delivery', g.bugsPerDelivery, 'count'],
     ].map(([metric, value, unit]) => ({ section: `Models: ${g.setup}`, metric, value: value == null ? null : Math.round(value * 100) / 100, unit, source: 'calculated', basis: 'Requests grouped by the models their AI requests really used (recorded ai.call events).' }))),
     ...data.outcomes.map((o) => ({ section: 'Workflow outcome', metric: o.label, value: o.value, unit: 'count', source: 'recorded', basis: 'Current status of each selected workflow.' })),
     ...data.agents.flatMap((a) => [
@@ -100,7 +101,9 @@ export function requestsCsv(source, filter) {
     ['QA model', (r) => r.setup.qa],
     ['product id', (r) => r.w.productId ?? r.w.id],
     ['product', (r) => r.product],
-    ['kind', (r) => (r.w.state?.base ? 'change request' : 'new product')],
+    ['kind', (r) => (r.w.state?.requestType === 'bug' ? 'bug report' : r.w.state?.base ? 'change request' : 'new product')],
+    ['bug origin', (r) => r.w.state?.spec?.bugOrigin ?? null],
+    ['about a QA-verified version', (r) => (r.w.state?.base ? Boolean(r.w.state.base.verified) : null)],
     ['request', (r) => r.w.requestText],
     ['submitted at', (r) => r.w.createdAt],
     ['finished at', (r) => r.w.finishedAt],

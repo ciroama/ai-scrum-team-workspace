@@ -216,7 +216,16 @@ screen:
   **Projects**, shows its latest conversation and makes the next request a
   change to it.
 
-Change requests need the PO and the Developer in AI-powered mode. The
+When you come back to a product you say **why**: 🐞 **Bug** (something does
+not work as agreed or as you expected) or ✏️ **Change request** (something
+new or different). For a bug the PO keeps the requirements unless the bug
+shows one was wrong, adds a criterion that checks the fix, and says where
+the bug comes from: the **requirements** or the **code**. Analytics counts
+the bugs you reported, how many got past a delivery QA had verified, and
+their origin; Compare models shows the bugs found later per verified
+delivery of each team setup.
+
+Bug reports and change requests need the PO and the Developer in AI-powered mode. The
 scripted PO only recognises new Hello World requests, and says so.
 
 ## What the dashboard shows

@@ -2872,3 +2872,31 @@ p.kpi-empty {
   font-weight: 650;
   font-size: var(--fs-md);
 }
+
+.request-type {
+  display: flex;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.request-type[hidden] {
+  display: none;
+}
+
+.type-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.type-chip[aria-checked='true'] {
+  border-color: var(--cyan);
+  background: var(--cyan-soft);
+  color: var(--text);
+}

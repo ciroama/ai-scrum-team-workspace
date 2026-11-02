@@ -137,7 +137,10 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       stages: STAGE_ORDER.map((id) => ({ id, title: STAGES[id].title, agent: STAGES[id].agent })),
       statusLabels: WORKFLOW_STATUS,
       requestLimits: REQUEST_LIMITS,
-      workflows: repository.listWorkflows({ limit: 500 }).map(({ state: _state, ...summary }) => summary),
+      workflows: repository.listWorkflows({ limit: 500 }).map(({ state: wfState, ...summary }) => ({
+        ...summary,
+        requestType: wfState?.requestType ?? (wfState?.base ? 'change' : null),
+      })),
       products: repository.listProducts(),
       focusWorkflowId: focus?.id ?? null,
       activeWorkflowId: repository.findActiveWorkflow()?.id ?? null,
@@ -167,6 +170,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
         workflowId: w.id,
         requestText: w.requestText,
         change: Boolean(w.state?.base),
+        requestType: w.state?.requestType ?? (w.state?.base ? 'change' : null),
         baseVersion: w.state?.base?.version ?? null,
         status: w.status,
         verified: w.verified,
@@ -180,6 +184,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
               acceptanceCriteria: w.state.spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
               changes: w.state.spec.changes ?? null,
               assumptions: w.state.spec.assumptions ?? null,
+              bugOrigin: w.state.spec.bugOrigin ?? null,
               clarifications: w.state.spec.clarifications ?? null,
             }
           : null,
@@ -214,8 +219,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       'POST',
       /^\/api\/workflows$/,
       async (req) => {
-        const { request, productId } = await readJsonBody(req);
-        const { workflow } = orchestrator.submit(request, { productId: productId || null });
+        const { request, productId, type } = await readJsonBody(req);
+        const { workflow } = orchestrator.submit(request, { productId: productId || null, type: productId ? type || null : null });
         return [201, { workflow }];
       },
     ],

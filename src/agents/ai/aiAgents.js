@@ -63,14 +63,24 @@ export class AiProductOwnerAgent extends Agent {
     this.rules = scripted;
   }
 
-  async analyse({ requestText, current = null, dialogue = [] }) {
+  async analyse({ requestText, current = null, dialogue = [], requestType = null }) {
+    const bug = Boolean(current) && requestType === 'bug';
     const system = [
       'You are the Product Owner (PO) of a small software team.',
       PRODUCT_SCOPE,
       'Behave like a real PO in backlog refinement: never build on guesses. Before writing requirements, look for everything the request leaves open: what exactly it is, scope, content and texts, look and layout, behaviour and rules, controls, states (start, end, errors, empty), edge cases, and how success is judged.',
       'When anything that matters is open, stop and ask (status "needs_clarification"): several numbered questions at once, each with why it matters and, where useful, a few options. A short request like "build a game" always needs questions.',
       'Only the user decides. If the user answers "you decide" (or similar) about something, you may decide it, and you record it as an assumption with "decidedBy": "po".',
-      ...(current
+      ...(bug
+        ? [
+            'The product already exists. You receive its current requirements and acceptance criteria, and a BUG REPORT from the user: something does not work as agreed or as expected.',
+            '- Do not add new features. Keep every requirement and criterion as it is, unless the bug shows one is missing or wrong: then fix it and list it in "changes".',
+            '- Add an acceptance criterion that checks the bug is fixed, when it can be checked.',
+            '- Say where the bug comes from in "bugOrigin": "requirements" (the agreed requirements missed or misstated it) or "implementation" (the requirements were right, the code is wrong).',
+            '- Return the COMPLETE lists. If the report is unclear (what happens, when, what was expected), ask first.',
+          ]
+        : []),
+      ...(current && !bug
         ? [
             'The product already exists. You receive its current requirements and acceptance criteria, and a change request from the user.',
             'Apply the change request to the current requirements:',
@@ -79,7 +89,9 @@ export class AiProductOwnerAgent extends Agent {
             '- Return the COMPLETE updated lists (not only the changes), and list what you did in "changes", e.g. "Changed: the text colour is now blue (was red)".',
             '- If the change request is unclear or leaves something open, or cannot be built as such a static web page, answer with status "needs_clarification" and ask.',
           ]
-        : [
+        : current
+          ? []
+          : [
             'Read the user\'s request and decide:',
             '- If it can be built as such a static web page and nothing that matters is left open, answer with status "ready".',
             '- If it cannot be built that way, or anything that matters is missing, vague or contradictory, answer with status "needs_clarification" and ask.',
@@ -98,7 +110,7 @@ export class AiProductOwnerAgent extends Agent {
       ...Object.values(WEB_CHECK_TYPES).map((t) => `  * ${t}`),
       'Answer with a JSON object only, in this shape:',
       current
-        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}'
+        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],' + (bug ? '"bugOrigin":"requirements" | "implementation",' : '') + '"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}'
         : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}',
       'or {"status":"needs_clarification","reason":"ambiguous" | "unsupported","message":"one short sentence for the user","questions":[{"question":"...","why":"why it matters","options":["...","..."]}]}',
     ].join('\n');
@@ -106,7 +118,7 @@ export class AiProductOwnerAgent extends Agent {
       ? JSON.stringify(
           {
             currentRequirements: { version: current.version, title: current.spec.title, requirements: current.spec.requirements, acceptanceCriteria: current.spec.acceptanceCriteria },
-            changeRequest: requestText,
+            ...(bug ? { bugReport: requestText } : { changeRequest: requestText }),
             ...(dialogue.length ? { clarificationDialogue: dialogue } : {}),
           },
           null,
@@ -120,8 +132,8 @@ export class AiProductOwnerAgent extends Agent {
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
       user,
-      validate: (reply) => validatePoReply(reply, { firstRound: dialogue.length === 0 }),
-      purpose: current ? 'apply the change request to the requirements' : 'analyse the request',
+      validate: (reply) => validatePoReply(reply, { firstRound: dialogue.length === 0, bug }),
+      purpose: bug ? 'analyse the bug report' : current ? 'apply the change request to the requirements' : 'analyse the request',
     });
 
     if (value.status === 'needs_clarification') {
@@ -144,7 +156,8 @@ export class AiProductOwnerAgent extends Agent {
       version: (current?.version ?? 0) + 1,
       assumptions: value.assumptions,
       ...(dialogue.length ? { clarifications: dialogue } : {}),
-      ...(current ? { changes: value.changes ?? [] } : {}),
+      ...(current ? { changes: value.changes ?? [], requestType: bug ? 'bug' : 'change' } : {}),
+      ...(bug ? { bugOrigin: value.bugOrigin } : {}),
     };
     return {
       status: 'ready',

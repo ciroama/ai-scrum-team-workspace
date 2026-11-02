@@ -217,6 +217,7 @@ function modelTable(data) {
     ['1st time right', (g) => pct(g.firstTimeRight), 'Requests whose first delivery passed QA and the PO'],
     ['AI calls', (g) => num(g.aiRequestsPerRequest), 'AI requests per request'],
     ['Tokens', (g) => (g.tokensPerRequest == null ? '—' : Math.round(g.tokensPerRequest).toLocaleString('en-US')), 'Tokens per request, as reported by Claude Code'],
+    ['Bugs later', (g) => num(g.bugsPerDelivery), 'Bugs you reported later about versions this setup delivered and QA verified, per verified delivery'],
     ['Avg. time', (g) => (g.averageCompletionMs == null ? '—' : duration(g.averageCompletionMs)), 'Average time to a verified result'],
   ];
   // Setups as columns, measures as rows: easy to read with a few setups side by side.

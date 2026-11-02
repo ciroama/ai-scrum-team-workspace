@@ -20,6 +20,7 @@ const ui = {
   loaded: false,
   targetProductId: null, // the product the next request changes; null = a new product
   answering: null, // the request whose PO question the next message answers
+  requestType: 'change', // coming back to a product: 'bug' or 'change'
   deleting: null, // product id being deleted ('*' for all)
   requirementsProductId: null,
   requirements: null,
@@ -138,7 +139,7 @@ const actions = {
         : await api('/api/workflows', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ request: text, productId: ui.targetProductId }),
+            body: JSON.stringify({ request: text, productId: ui.targetProductId, type: ui.targetProductId ? ui.requestType : undefined }),
           });
       ui.blank = false;
       ui.draft = '';
@@ -281,6 +282,11 @@ const actions = {
       const input = document.getElementById('request-input');
       if (input) input.focus();
     });
+  },
+
+  setRequestType(type) {
+    ui.requestType = type;
+    render();
   },
 
   setTarget(productId) {

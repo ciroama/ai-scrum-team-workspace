@@ -112,7 +112,9 @@ export class Orchestrator {
   baseOf(productId) {
     const versions = this.repository.listProductWorkflows(productId).filter((w) => w.state?.spec);
     const latest = versions.at(-1);
-    return latest ? { workflowId: latest.id, version: latest.state.spec.version ?? versions.length, spec: latest.state.spec } : null;
+    return latest
+      ? { workflowId: latest.id, version: latest.state.spec.version ?? versions.length, spec: latest.state.spec, status: latest.status, verified: latest.verified }
+      : null;
   }
 
   label(actor) {
@@ -130,7 +132,11 @@ export class Orchestrator {
    * @param {{ productId?: string | null }} [options]
    * @returns {{ workflow: object, done: Promise<object> }}
    */
-  submit(requestText, { productId = null } = {}) {
+  submit(requestText, { productId = null, type = null } = {}) {
+    // What brings the user back to a product: a bug (it does not work as
+    // agreed) or a change request (something new or different).
+    if (type != null && type !== 'bug' && type !== 'change') throw new ValidationError('"type" must be "bug" or "change".');
+    if (type != null && productId == null) throw new ValidationError('A bug report or change request needs the product it is about.');
     if (typeof requestText !== 'string' || requestText.trim() === '') {
       throw new ValidationError('Please describe what you would like to build.');
     }
@@ -167,8 +173,9 @@ export class Orchestrator {
       stage: 'analysis',
       productId,
       title: base ? base.spec.title : 'New request',
-      state: base ? { base } : {},
+      state: base ? { base, requestType: type ?? 'change' } : {},
     });
+    const requestType = base ? type ?? 'change' : null;
     const config = this.repository.getAgentConfig();
     const team = [...this.team.values()].map((a) => ({
       id: a.id,
@@ -183,8 +190,13 @@ export class Orchestrator {
       category: 'request',
       actor: 'user',
       actorKind: 'human',
-      summary: base ? `Change request for "${base.spec.title}" (requirements v${base.version}): "${text}"` : `Requirement submitted: "${text}"`,
-      detail: { requestText: text, ...(base ? { productId, baseVersion: base.version, baseWorkflowId: base.workflowId } : {}) },
+      summary: base
+        ? `${requestType === 'bug' ? 'Bug report' : 'Change request'} for "${base.spec.title}" (requirements v${base.version}): "${text}"`
+        : `Requirement submitted: "${text}"`,
+      detail: {
+        requestText: text,
+        ...(base ? { productId, requestType, baseVersion: base.version, baseWorkflowId: base.workflowId, baseVerified: base.verified } : {}),
+      },
     });
     this.#event(workflow.id, {
       type: 'workflow.created',
@@ -561,7 +573,7 @@ export class Orchestrator {
     const { workflow, agent, say } = ctx;
     const base = workflow.state.base ?? null;
     const dialogue = workflow.state.dialogue ?? [];
-    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base, dialogue });
+    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base, dialogue, requestType: workflow.state.requestType ?? null });
     this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
@@ -602,6 +614,7 @@ export class Orchestrator {
         version: spec.version,
         changes: spec.changes ?? null,
         assumptions: spec.assumptions ?? null,
+        bugOrigin: spec.bugOrigin ?? null,
       },
     });
     say({

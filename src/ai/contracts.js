@@ -83,7 +83,7 @@ function validateCheck(check, problems, where) {
  * @returns {{ status: 'ready', title: string, requirements: string[], acceptanceCriteria: object[], assumptions: object[], handoffMessage: string, summary: string }
  *         | { status: 'needs_clarification', reason: string, message: string, questions: object[] }}
  */
-export function validatePoReply(reply, { firstRound = false } = {}) {
+export function validatePoReply(reply, { firstRound = false, bug = false } = {}) {
   const problems = [];
   if (reply.status === 'needs_clarification') {
     const questions = Array.isArray(reply.questions) ? reply.questions : [];
@@ -118,6 +118,9 @@ export function validatePoReply(reply, { firstRound = false } = {}) {
       if (!isText(c?.description, 500)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
       validateCheck(c?.check, problems, `acceptanceCriteria[${i}]`);
     });
+  }
+  if (bug && reply.bugOrigin !== 'requirements' && reply.bugOrigin !== 'implementation') {
+    problems.push('This is a bug report: say where the bug comes from in "bugOrigin": "requirements" (the requirements missed or misstated it) or "implementation" (the requirements were right, the code is wrong).');
   }
   if (!Array.isArray(reply.assumptions)) {
     problems.push('"assumptions" is required: list every detail you rely on that the request does not state word for word, with "decidedBy": "user" or "po" (an empty list if there are none).');
@@ -154,6 +157,7 @@ export function validatePoReply(reply, { firstRound = false } = {}) {
     acceptanceCriteria,
     assumptions: reply.assumptions.map((a) => ({ text: a.text.trim(), decidedBy: a.decidedBy })),
     whyNoQuestions: isText(reply.whyNoQuestions, 800) ? reply.whyNoQuestions.trim() : null,
+    bugOrigin: bug ? reply.bugOrigin : null,
     summary: isText(reply.summary, 500) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
     changes: Array.isArray(reply.changes) ? reply.changes.filter((c) => isText(c, 500)).map((c) => c.trim()).slice(0, 20) : null,

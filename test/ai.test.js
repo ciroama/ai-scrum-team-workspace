@@ -687,3 +687,42 @@ test('each agent can use its own model; requests record the models and Analytics
     [['claude-sonnet-test', 'claude-opus-test', 'scripted', 1, 3], ['claude-sonnet-test', 'claude-sonnet-test', 'scripted', 1, 3]].sort(),
   );
 });
+
+test('coming back with a bug: the PO traces its origin, and Analytics counts bugs that got past the team', async (t) => {
+  const bugSpec = { content: { ...PO_SPEC, changes: ['Added: AC for the fix'], bugOrigin: 'implementation' } };
+  const noOrigin = { content: { ...PO_SPEC, changes: [] } };
+  const { app, claude } = await aiApp(t, [
+    { content: PO_SPEC }, { content: page('red') }, ACCEPT, // v1, verified
+    noOrigin, bugSpec, { content: page('red') }, ACCEPT, // bug report: first answer lacks the origin
+    { content: PO_SPEC }, { content: page('red') }, ACCEPT, // change request
+  ]);
+  const { workflow: first } = await run(app);
+  assert.equal((await fetch(`${app.url}/api/workflows`, json('POST', { request: 'a bug', type: 'oops', productId: first.productId }))).status, 400);
+  assert.throws(() => app.orchestrator.submit('a bug', { type: 'bug' }), /needs the product it is about/);
+
+  const bug = await app.orchestrator.submit('The phrase is not centred on small screens', { productId: first.productId, type: 'bug' }).done;
+  assert.equal(bug.status, 'completed');
+  assert.equal(bug.state.requestType, 'bug');
+  assert.equal(bug.state.spec.bugOrigin, 'implementation');
+  const received = await claude.received();
+  const poInput = JSON.parse(received[3].stdin);
+  assert.equal(poInput.bugReport, 'The phrase is not centred on small screens');
+  assert.match(option(received[3].args, '--system-prompt'), /BUG REPORT/);
+  assert.match(received[4].stdin, /bugOrigin/, 'the answer without an origin was sent back');
+  assert.match(app.repository.listEvents(bug.id).find((e) => e.type === 'request.submitted').summary, /^Bug report for/);
+
+  await app.orchestrator.submit('Make the text blue', { productId: first.productId, type: 'change' }).done;
+
+  const data = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  const kpi = (key) => data.kpis.find((k) => k.key === key);
+  assert.equal(kpi('bugsReported').value, 1);
+  assert.match(kpi('bugsReported').detail, /^1 after a delivery QA had verified · origin: 0 requirements, 1 code$/);
+  assert.equal(kpi('changeRequests').value, 1);
+  assert.equal(data.process.qa.find((m) => m.key === 'qaEscaped').value, 1);
+  assert.equal(data.process.dev.find((m) => m.key === 'devBugsCode').value, 1);
+  const setup = data.modelComparison[0];
+  assert.equal(setup.bugsPerDelivery, 1 / 3, 'one bug found later, three verified deliveries');
+
+  const state = await (await fetch(`${app.url}/api/state`)).json();
+  assert.deepEqual(state.workflows.map((w) => w.requestType).sort(), ['bug', 'change', null].sort());
+});

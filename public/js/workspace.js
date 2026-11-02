@@ -167,6 +167,7 @@ export function mountHome(ui, actions) {
             h('select', { id: 'product-target', 'aria-label': 'New product or change to an existing product', onchange: (e) => actions.setTarget(e.target.value || null) }),
           ),
         ),
+        h('div', { id: 'request-type', className: 'request-type', role: 'radiogroup', 'aria-label': 'Why you come back to this product' }),
         h(
           'div',
           { className: 'composer-box' },
@@ -279,7 +280,7 @@ function conversationItems(state, detail, ui, actions) {
             'li',
             { className: 'msg msg-user' },
             avatarFor('user'),
-            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), d.baseVersion ? h('p', { className: 'muted small' }, `Change request on requirements v${d.baseVersion}`) : null, h('p', null, d.requestText)),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), d.baseVersion ? h('p', { className: 'muted small' }, `${d.requestType === 'bug' ? '🐞 Bug report' : 'Change request'} on requirements v${d.baseVersion}`) : null, h('p', null, d.requestText)),
           ),
         );
         break;
@@ -294,6 +295,7 @@ function conversationItems(state, detail, ui, actions) {
               h('p', { className: 'muted small' }, 'Acceptance criteria'),
               h('ol', { className: 'plan' }, d.acceptanceCriteria.map((c) => h('li', null, h('span', { className: 'num ac' }, c.id), h('span', null, c.description)))),
               assumptionList(d.assumptions),
+              d.bugOrigin ? h('p', { className: 'muted small' }, `Bug origin: ${d.bugOrigin === 'requirements' ? 'the requirements missed or misstated it' : 'the code (the requirements were right)'}.`) : null,
             ],
           ),
         );
@@ -480,10 +482,27 @@ export function renderComposer(state, ui, actions) {
     h('option', { value: '', selected: !target }, 'A new product'),
     state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id, selected: target && p.id === target.id }, `Change: ${p.title} (v${p.versions})`)),
   );
-  input.placeholder = target
-    ? `Describe the change to "${target.title}", e.g. "Make the text blue" or "Add a button that…"`
-    : 'Describe what you would like to build, e.g. "Build a simple Hello World web application."';
-  button.firstChild.textContent = ui.submitting ? 'Starting…' : target ? 'Request change' : 'Start workflow';
+  const bug = Boolean(target) && ui.requestType === 'bug';
+  // Coming back to a product: you say whether it is a bug or a change request.
+  const typeEl = document.getElementById('request-type');
+  typeEl.hidden = !target;
+  mount(
+    typeEl,
+    target
+      ? [
+          ['bug', '🐞 Bug', 'Something does not work as agreed or as you expected'],
+          ['change', '✏️ Change request', 'You want something new or different'],
+        ].map(([value, label, title]) =>
+          h('button', { type: 'button', role: 'radio', 'aria-checked': String(ui.requestType === value), className: 'type-chip', title, onclick: () => actions.setRequestType(value) }, label),
+        )
+      : null,
+  );
+  input.placeholder = !target
+    ? 'Describe what you would like to build, e.g. "Build a simple Hello World web application."'
+    : bug
+      ? `Describe what does not work in "${target.title}": what you did, what happened, what you expected.`
+      : `Describe the change to "${target.title}", e.g. "Make the text blue" or "Add a button that…"`;
+  button.firstChild.textContent = ui.submitting ? 'Starting…' : !target ? 'Start workflow' : bug ? 'Report bug' : 'Request change';
 
   const anyAi = state.agents.some((a) => a.mode === 'ai');
   mount('workspace-kind', anyAi ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
@@ -492,8 +511,10 @@ export function renderComposer(state, ui, actions) {
     mount(
       'supported',
       poAi
-        ? `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
-        : 'Change requests need the PO and the Developer in AI-powered mode (Team page).',
+        ? bug
+          ? `Bug report: the PO analyses it against requirements v${target.versions} and says whether it comes from the requirements or the code; then the team fixes it and QA re-checks every criterion.`
+          : `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
+        : 'Bug reports and change requests need the PO and the Developer in AI-powered mode (Team page).',
     );
     return finishComposer(state, ui, active);
   }
