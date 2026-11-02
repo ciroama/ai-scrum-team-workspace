@@ -120,6 +120,8 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
   assert.equal(workflow.status, 'completed');
   assert.equal(workflow.verified, true);
   assert.equal(workflow.title, 'Green hello world page');
+  // The PO asked nothing, and its reason is recorded.
+  assert.equal(events.find((e) => e.type === 'po.requirements').detail.whyNoQuestions, PO_SPEC.whyNoQuestions);
 
   // Claude Code really ran three times (analysis, implementation, review),
   // with the user's words, the default model and no tools.
@@ -641,6 +643,7 @@ test('team process statistics: PO questions one by one, Developer mistakes caugh
   assert.equal(value(p.po, 'poQuestionsCount').value, 3, '…with three questions asked at once');
   assert.equal(value(p.po, 'poAnswers').value, 1);
   assert.equal(value(p.po, 'poAssumptions').value, 1, 'one assumption written down…');
+  assert.equal(value(p.po, 'poNoQuestions').value, 0, 'it asked, so it did not go ahead without asking');
   assert.equal(value(p.po, 'poAssumptions').detail, '1 from your answers · 0 decided by the PO');
   assert.equal(value(p.po, 'poRejected').value, 1);
   assert.equal(value(p.dev, 'devDeliveries').value, 3, 'first build, QA correction, PO rework');
@@ -727,4 +730,12 @@ test('coming back with a bug: the PO traces its origin, and Analytics counts bug
 
   const state = await (await fetch(`${app.url}/api/state`)).json();
   assert.deepEqual(state.workflows.map((w) => w.requestType).sort(), ['bug', 'change', null].sort());
+});
+
+test('PO contract: a product of many versions fits, and the error says what is wrong', () => {
+  const crit = (n) => Array.from({ length: n }, (_, i) => ({ description: `c${i}`, check: { type: 'fileExists', path: 'index.html' } }));
+  const reply = (n, c = 1) => ({ status: 'ready', title: 'Game', requirements: Array.from({ length: n }, (_, i) => `r${i}`), acceptanceCriteria: crit(c), assumptions: [] });
+  assert.equal(validatePoReply(reply(20, 15), { firstRound: false }).requirements.length, 20);
+  assert.throws(() => validatePoReply(reply(41), { firstRound: false }), /1–40 strings \(it has 41\)/);
+  assert.throws(() => validatePoReply({ ...reply(1), requirements: ['x'.repeat(1001)] }, { firstRound: false }), /requirements\[0\] must be a non-empty string of at most 1000/);
 });

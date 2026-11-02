@@ -615,6 +615,7 @@ export class Orchestrator {
         changes: spec.changes ?? null,
         assumptions: spec.assumptions ?? null,
         bugOrigin: spec.bugOrigin ?? null,
+        whyNoQuestions: spec.whyNoQuestions ?? null,
       },
     });
     say({

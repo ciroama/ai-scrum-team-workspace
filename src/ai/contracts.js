@@ -22,6 +22,10 @@ export const WEB_CHECK_TYPES = {
 const ALLOWED_EXTENSIONS = ['.html', '.css', '.js', '.svg', '.md', '.json', '.txt'];
 const MAX_FILES = 8;
 const MAX_FILE_BYTES = 200_000;
+// Limits of the agreed requirements: they hold the whole product, every version adds to them.
+export const MAX_REQUIREMENTS = 40;
+export const MAX_CRITERIA = 30;
+const MAX_TEXT = 1000;
 
 class ContractError extends Error {
   constructor(problems) {
@@ -107,15 +111,22 @@ export function validatePoReply(reply, { firstRound = false, bug = false } = {})
   }
   if (reply.status !== 'ready') throw new ContractError(['"status" must be "ready" or "needs_clarification".']);
   if (!isText(reply.title, 120)) problems.push('"title" is required (max 120 characters).');
-  if (!Array.isArray(reply.requirements) || !reply.requirements.length || reply.requirements.length > 15 || !reply.requirements.every((r) => isText(r, 500))) {
-    problems.push('"requirements" must be 1–15 non-empty strings.');
+  // A product grows with every change request and the PO returns the whole
+  // list each time, so the limits leave room for a product of many versions.
+  const reqs = reply.requirements;
+  if (!Array.isArray(reqs) || !reqs.length || reqs.length > MAX_REQUIREMENTS) {
+    problems.push(`"requirements" must be a list of 1–${MAX_REQUIREMENTS} strings${Array.isArray(reqs) ? ` (it has ${reqs.length})` : ''}.`);
+  } else {
+    reqs.forEach((r, i) => {
+      if (!isText(r, MAX_TEXT)) problems.push(`requirements[${i}] must be a non-empty string of at most ${MAX_TEXT} characters.`);
+    });
   }
   const criteria = reply.acceptanceCriteria;
-  if (!Array.isArray(criteria) || !criteria.length || criteria.length > 12) {
-    problems.push('"acceptanceCriteria" must contain 1–12 items.');
+  if (!Array.isArray(criteria) || !criteria.length || criteria.length > MAX_CRITERIA) {
+    problems.push(`"acceptanceCriteria" must contain 1–${MAX_CRITERIA} items${Array.isArray(criteria) ? ` (it has ${criteria.length})` : ''}.`);
   } else {
     criteria.forEach((c, i) => {
-      if (!isText(c?.description, 500)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
+      if (!isText(c?.description, MAX_TEXT)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
       validateCheck(c?.check, problems, `acceptanceCriteria[${i}]`);
     });
   }

@@ -115,6 +115,7 @@ export function requestsCsv(source, filter) {
     ['assumptions', (r) => (r.spec ? (r.spec.assumptions ?? []).length : null)],
     ['assumptions from you', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy !== 'po').length : null)],
     ['assumptions decided by the PO', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy === 'po').length : null)],
+    ['PO went ahead without asking', (r) => (r.spec ? eventsOf(r.w.id, 'po.requirements').some((e) => e.detail?.whyNoQuestions) : null)],
     ['your answers', (r) => eventsOf(r.w.id, 'clarification.answered').length],
     ['requirements version', (r) => r.spec?.version ?? null],
     ['requirements', (r) => r.spec?.requirements.length ?? null],

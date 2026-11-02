@@ -13,7 +13,7 @@
 import { Agent, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
-import { ContractError, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply } from '../../ai/contracts.js';
+import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply } from '../../ai/contracts.js';
 import { QaAgent } from '../qa.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
@@ -106,6 +106,7 @@ export class AiProductOwnerAgent extends Agent {
         : '- The user has not answered anything yet: every assumption must be "decidedBy": "user", and "whyNoQuestions" must explain why nothing is left open. Otherwise ask.',
       '- Use texts exactly as the user wrote them (same words and capitalisation).',
       '- For colours use CSS colour names or hex codes, e.g. "green" or "#00aa00".',
+      `- At most ${MAX_REQUIREMENTS} requirements and ${MAX_CRITERIA} acceptance criteria, each under 1000 characters. They describe the whole product, so merge overlapping ones rather than only adding.`,
       '- Every acceptance criterion needs a machine-checkable "check" of one of these types (nothing else is allowed):',
       ...Object.values(WEB_CHECK_TYPES).map((t) => `  * ${t}`),
       'Answer with a JSON object only, in this shape:',
@@ -158,6 +159,8 @@ export class AiProductOwnerAgent extends Agent {
       ...(dialogue.length ? { clarifications: dialogue } : {}),
       ...(current ? { changes: value.changes ?? [], requestType: bug ? 'bug' : 'change' } : {}),
       ...(bug ? { bugOrigin: value.bugOrigin } : {}),
+      // Why the PO wrote the requirements without asking you anything.
+      ...(!dialogue.length && value.whyNoQuestions ? { whyNoQuestions: value.whyNoQuestions } : {}),
     };
     return {
       status: 'ready',

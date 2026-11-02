@@ -295,6 +295,7 @@ function conversationItems(state, detail, ui, actions) {
               h('p', { className: 'muted small' }, 'Acceptance criteria'),
               h('ol', { className: 'plan' }, d.acceptanceCriteria.map((c) => h('li', null, h('span', { className: 'num ac' }, c.id), h('span', null, c.description)))),
               assumptionList(d.assumptions),
+              d.whyNoQuestions ? h('p', { className: 'muted small' }, `No questions asked. The PO's reason: ${d.whyNoQuestions}`) : null,
               d.bugOrigin ? h('p', { className: 'muted small' }, `Bug origin: ${d.bugOrigin === 'requirements' ? 'the requirements missed or misstated it' : 'the code (the requirements were right)'}.`) : null,
             ],
           ),
