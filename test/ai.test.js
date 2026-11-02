@@ -149,11 +149,11 @@ test('AI PO and AI Developer build exactly what was asked; scripted QA verifies 
   assert.equal(review.actorKind, 'ai', 'the AI-powered PO decides the acceptance');
   assert.equal(review.detail.decidedBy, 'ai');
   assert.deepEqual(review.detail.reasons, ['All criteria verified.']);
-  // The review saw QA's evidence and the product files.
+  // The review saw QA's evidence, never the code: a PO does not read the implementation.
   const reviewInput = JSON.parse(received[2].stdin);
   assert.equal(reviewInput.qaVerification.verdict, 'pass');
-  assert.ok(reviewInput.files.some((f) => f.path === 'style.css'));
-  assert.ok(!reviewInput.files.some((f) => f.path.startsWith('test/')));
+  assert.equal(reviewInput.files, undefined);
+  assert.doesNotMatch(received[2].stdin, /hello world<\/p>|<html|color:/i);
 
   // QA's tests really ran against the generated files.
   const results = byType('test.results')[0].detail;

@@ -178,18 +178,19 @@ export class AiProductOwnerAgent extends Agent {
 
   /**
    * The acceptance decision, made by the model from the request, the agreed
-   * requirements, QA's evidence and the product files. Guard: it may reject
-   * a product whose tests pass, but cannot accept one QA did not verify.
+   * requirements and QA's evidence. Like a real PO it never reads the code:
+   * whether the code is right is for QA to show. Guard: it may reject a
+   * product whose tests pass, but cannot accept one QA did not verify.
    */
-  async review({ spec, verification, files = [], previousRejections = [] }) {
+  async review({ spec, verification, previousRejections = [] }) {
     const evidence = this.rules.review({ spec, verification });
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
       'You are the Product Owner (PO) of a small software team, doing the final review of an increment.',
-      'You receive the user\'s request, the agreed requirements and acceptance criteria, the result of QA\'s automated verification, and the product files.',
+      'You receive the user\'s request, the agreed requirements and acceptance criteria, and the result of QA\'s verification. You do not see the code: as a PO you judge the product by the request, the requirements and QA\'s evidence, never by reading the implementation.',
       'Decide whether to accept the product:',
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
-      '- Reject if QA did not verify every criterion, or if, reading the files, the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons the Developer can act on: a rejected product goes back to the Developer for rework.',
+      '- Reject if QA did not verify every criterion, or if QA\'s evidence shows the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons the Developer can act on: a rejected product goes back to the Developer for rework.',
       '- If you rejected earlier versions, check whether your reasons were addressed. Do not invent new demands beyond the request and the requirements.',
       '- If QA raised concerns that the requirements may not match the request, weigh them against the request: reject if the product misses what the user asked.',
       qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
@@ -213,7 +214,6 @@ export class AiProductOwnerAgent extends Agent {
               qaConcerns: verification.concerns ?? [],
             }
           : { executed: false },
-        files: files.map((f) => ({ path: f.path, content: f.content })),
         ...(previousRejections.length ? { yourPreviousRejections: previousRejections } : {}),
       },
       null,

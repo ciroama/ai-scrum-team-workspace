@@ -122,8 +122,9 @@ of Node modules. A failing QA test is a defect for the Developer; a QA test
 file that crashes is QA's own problem and never counts against the product.
 
 When the PO is AI-powered, its **final acceptance** is an AI decision too:
-the PO reads the request, the requirements, QA's results and the product
-files, then accepts or rejects with its reasons. One guard stays fixed: the
+the PO reads the request, the requirements and QA's results (never the
+code: like a real PO it judges the product, not the implementation), then
+accepts or rejects with its reasons. One guard stays fixed: the
 PO **may reject** a product whose tests pass (for example when it does not
 really do what you asked), but **cannot accept** one that QA did not
 verify. The scripted PO accepts by rule: only if QA verified every
@@ -168,8 +169,8 @@ flowchart TD
    the Developer, and QA verifies the correction again.
 5. **Final review (PO).** The PO accepts or rejects the product:
    - It **can never accept** a product that QA did not verify.
-   - An AI-powered PO **can reject** a verified product when, reading the
-     files, it does not really do what you asked. The product then goes
+   - An AI-powered PO **can reject** a verified product when, from QA's
+     evidence and concerns, it does not really do what you asked. The product then goes
      back to the Developer with the PO's reasons, QA verifies the rework,
      and the PO reviews it again, remembering its earlier reasons.
 6. **Limit.** The Developer has **three implementation attempts** in

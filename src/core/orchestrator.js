@@ -765,9 +765,9 @@ export class Orchestrator {
   async #review(ctx) {
     const { workflow, agent, say } = ctx;
     const state = workflow.state;
-    const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path));
     const rejections = state.poRejections ?? [];
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files, previousRejections: rejections });
+    // The PO never receives the code: it judges by the request, the requirements and QA's evidence.
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections });
     this.#recordAiCalls(ctx, review.aiCalls);
     const { aiCalls: _calls, ...decision } = review;
     const qaPassed = state.verification?.verdict === 'pass';
