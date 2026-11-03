@@ -24,8 +24,10 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  *    on to the user); the PO never reads the code.
  * 3: as 2, and the PO writes its acceptance criteria in words: QA decides
  *    how to test each one.
+ * 4: as 3, and a product with behaviour keeps its rules in logic.js, which
+ *    loads without a browser: QA tests the behaviour through it.
  */
-export const TEAM_RULES_VERSION = 3;
+export const TEAM_RULES_VERSION = 4;
 const OUTPUT_LIMIT = 20_000;
 const MAX_FILE_PREVIEW = 200_000;
 

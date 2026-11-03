@@ -16,7 +16,8 @@ import { AiUnavailableError } from '../../ai/claudeCode.js';
 import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, MAX_TEAM_QUESTIONS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply, validateTeamAnswerReply } from '../../ai/contracts.js';
 import { QaAgent } from '../qa.js';
 import { roleInstructions } from '../scrumRoles.js';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from '../../actions/runCommand.js';
 
@@ -31,6 +32,26 @@ export function errorLine(output) {
  * crashes before its tests run is sent back to QA with the error, so QA fixes
  * it in the same request instead of blocking the verification.
  */
+/** Where the Developer puts the product's rules, so QA can test them without a browser. */
+export const LOGIC_FILE = 'logic.js';
+
+/**
+ * Loads logic.js on its own in Node, as QA will: it must load without a
+ * browser, stop by itself and export its functions. Returns the problem, or null.
+ */
+export async function checkLogicFile(content) {
+  const dir = await mkdtemp(join(tmpdir(), 'logic-check-'));
+  try {
+    await writeFile(join(dir, LOGIC_FILE), content);
+    const probe = "const m = require('./logic.js'); const n = m && typeof m === 'object' ? Object.keys(m).length : 0; if (!n) { console.error('Error: logic.js exports nothing for Node'); process.exit(2); }";
+    const run = await runCommand({ command: process.execPath, args: ['-e', probe], cwd: dir, timeoutMs: 10_000 });
+    if (run.timedOut) return 'logic.js keeps running when it is loaded (a timer, loop or animation started at the top level)';
+    return run.exitCode === 0 ? null : errorLine(run.stderr || run.stdout);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function dryRun(dir, source) {
   const path = join('qa', '.dry-run.mjs');
   await mkdir(join(dir, 'qa'), { recursive: true });
@@ -376,7 +397,8 @@ export class AiDeveloperAgent extends Agent {
       '- Do not write files in the test/ folder: it belongs to QA.',
       '- The page must work when index.html is opened directly from disk: use classic <script src="..."> tags (no type="module"), no fetch of local files, no external URLs.',
       '- Every text a criterion requires must be present in the HTML itself, not only added by JavaScript.',
-      '- Keep behaviour testable without a browser: put rules, state changes and calculations in plain functions in a .js file, and at its end export them for Node with: if (typeof module !== "undefined") module.exports = { ... }; QA may test them.',
+      `- If the product has any behaviour (anything a script does), put ALL its rules in ${LOGIC_FILE}: state, movement, timing, collisions, scoring, levels, randomness. Plain functions only: no window, document, canvas, DOM events, timers or animation frames, and no top-level code that runs the product. Make randomness and time parameters (e.g. pass a random() function and the elapsed time) so tests can control them. End it with: if (typeof module !== "undefined") module.exports = { ...every function }.`,
+      `- Load ${LOGIC_FILE} in index.html before the other scripts; the other scripts only draw and handle input, calling its functions. QA tests the behaviour through ${LOGIC_FILE} without a browser, and the workspace checks that it loads on its own before accepting your files.`,
       '- Use exactly the values the requirements state (for example the same colour name or text).',
       ...askingRules(canAsk, 'write the code'),
       'Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"}',
@@ -408,7 +430,19 @@ export class AiDeveloperAgent extends Agent {
         : change
           ? `Change the existing product to meet the updated requirements:\n${user}`
           : `Implement this:\n${user}`,
-      validate: (reply) => validateDevReply(reply, { canAsk }),
+      validate: async (reply) => {
+        const value = validateDevReply(reply, { canAsk });
+        if (value.status === 'questions') return value;
+        // The product as it will be on disk: the current files, with this delivery on top.
+        const product = new Map(currentFiles.map((f) => [f.path, f.content]));
+        for (const f of value.files) product.set(f.path, f.content);
+        const scripts = [...product.keys()].filter((p) => p.endsWith('.js') || /<script\b[^>]*>\s*[^<\s]/i.test(product.get(p) ?? ''));
+        if (!scripts.length) return value;
+        if (!product.has(LOGIC_FILE)) throw new ContractError([`The product has behaviour (${scripts.join(', ')}) but no ${LOGIC_FILE}: put its rules there, as plain functions QA can test without a browser.`]);
+        const problem = await checkLogicFile(product.get(LOGIC_FILE));
+        if (problem) throw new ContractError([`${LOGIC_FILE} must load on its own without a browser, but loading it failed: ${problem}. Move everything that needs the page (document, canvas, events, timers) to the other scripts.`]);
+        return value;
+      },
       purpose: correcting ? (defects.some((d) => d.reportedBy === 'PO') ? "rework what the PO rejected" : 'fix the reported defects') : change ? 'implement the change request' : 'implement the requirements',
     });
     if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
@@ -464,7 +498,7 @@ export class AiQaAgent extends Agent {
       '- names every test "QA-AI: <what it checks>";',
       '- reads product files relative to process.cwd() (the product folder); it has READ-ONLY access, no network and cannot start processes;',
       '- reads files only inside each test, never at the top of the module, and only files that exist in "files": then a problem fails one test, not the whole file;',
-      '- tests behaviour where the files allow it: plain .js files that export functions for Node can be loaded with createRequire(import.meta.url)("../file.js"); otherwise check the HTML, CSS and scripts as text;',
+      `- tests behaviour through ${LOGIC_FILE} when the product has it: it holds every rule and is made to load in Node, so load it inside a test with createRequire(import.meta.url)("../${LOGIC_FILE}") and simulate (call its functions step by step, with your own random() and times). Never load the other scripts: they need a browser. Check the look (HTML, CSS) as text;`,
       '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
       'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
       ...(toTest.length

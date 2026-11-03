@@ -15,6 +15,7 @@
 export const DEFINITION_OF_DONE = [
   'Every acceptance criterion is covered by at least one automated test written by QA, and every test passes.',
   'The product opens from index.html directly from disk and works offline (no external resources).',
+  'If the product has behaviour, all its rules are in logic.js, which loads without a browser, so they can be tested.',
   'No open defects: everything QA or the PO reported has been fixed and verified again.',
   'The work is committed to the product\'s own Git repository.',
 ];

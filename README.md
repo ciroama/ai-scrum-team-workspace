@@ -110,6 +110,8 @@ PO can accept it:
 - Every acceptance criterion is covered by at least one automated test
   written by QA, and every test passes.
 - The product opens from `index.html` directly from disk and works offline.
+- If the product has behaviour (a game, a calculator…), all its rules are in
+  `logic.js`, which loads without a browser, so QA can test them.
 - No open defects: everything QA or the PO reported is fixed and verified
   again.
 - The work is committed to the product's own Git repository.
@@ -227,8 +229,13 @@ models", and the `team rules` column of the requests CSV):
   PO read the product files in its final review.
 - **v2**: the Developer and QA may ask the PO, who answers or passes the
   question on to you; the PO never reads the code.
-- **v3** (current): as v2, and the PO writes its acceptance criteria in
-  words, never how to build or test them; QA decides how to test each one.
+- **v3**: as v2, and the PO writes its acceptance criteria in words, never
+  how to build or test them; QA decides how to test each one.
+- **v4** (current): as v3, and a product with behaviour keeps all its rules
+  in `logic.js`, which must load without a browser (the workspace checks it
+  before accepting the Developer's files). QA tests the behaviour through it,
+  by simulating the product step by step: tests run in Node, with no screen,
+  canvas or keyboard.
 
 Planned for the next release: an approval checkpoint, where the PO waits
 for you to approve the requirements before the Developer starts.

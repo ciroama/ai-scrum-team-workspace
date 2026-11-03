@@ -817,7 +817,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, DEV_ASKS, PO_ANSWERS, DEV_ASKS, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
-  assert.deepEqual(workflow.state.rules, { version: 3 });
+  assert.deepEqual(workflow.state.rules, { version: 4 });
 
   const question = events.find((e) => e.type === 'team.question');
   assert.equal(question.actor, 'dev');
@@ -847,7 +847,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const csv = requestsCsv(app.repository.analyticsSource(), {});
   const [header, row] = csv.replace(/^﻿/, '').trim().split('\r\n');
   const col = (name) => row.split(',')[header.split(',').indexOf(name)];
-  assert.equal(col('team rules'), 'v3');
+  assert.equal(col('team rules'), 'v4');
   assert.equal(col('Developer questions'), '1');
   assert.equal(col('team questions answered by the PO'), '1');
 });
@@ -964,4 +964,32 @@ test('Stop ends the running Claude Code request now; the workflow can then be re
 
   assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/cancel`, { method: 'POST' })).status, 200);
   assert.equal((await fetch(`${app.url}/api/products/${workflow.id}`, { method: 'DELETE' })).status, 200);
+});
+
+// ---- Behaviour in logic.js, tested by QA without a browser ----
+
+test('a product with behaviour keeps its rules in logic.js; QA simulates it without a browser', async (t) => {
+  const html = '<!doctype html><html><head><title>Jump</title></head><body><p>hello world</p><canvas id="c"></canvas><script src="logic.js"></script><script src="game.js"></script></body></html>';
+  const css = { path: 'style.css', content: 'body { background-color: green; display: flex; justify-content: center; }\np { color: red; }\n' };
+  const game = { path: 'game.js', content: "const c = document.getElementById('c');\nwindow.addEventListener('keydown', () => {});\n" };
+  // First delivery: the rules live in a script that needs the page.
+  const noLogic = { content: { files: [{ path: 'index.html', content: html }, css, game, { path: 'logic.js', content: "const canvas = document.getElementById('c');\nfunction jump(s) { return { ...s, y: s.y + 80 }; }\n" }] } };
+  const good = { content: delivered({ files: [{ path: 'index.html', content: html }, css, game, { path: 'logic.js', content: 'function jump(s) { return { ...s, y: s.y + 80 }; }\nif (typeof module !== "undefined") module.exports = { jump };\n' }] }) };
+  const qa = {
+    content: {
+      summary: 'Simulates a jump.',
+      criteriaChecks: CRITERIA_CHECKS,
+      testFile: "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { createRequire } from 'node:module';\ntest('QA-AI: a jump lifts the player', () => {\n  const logic = createRequire(import.meta.url)('../logic.js');\n  assert.equal(logic.jump({ y: 0 }).y, 80);\n});\n",
+    },
+  };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, noLogic, good, qa, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed');
+  const received = await claude.received();
+  assert.match(option(received[1].args, '--system-prompt'), /put ALL its rules in logic\.js/);
+  assert.match(received[2].stdin, /logic\.js must load on its own without a browser, but loading it failed: ReferenceError: document is not defined/);
+  assert.match(option(received[3].args, '--system-prompt'), /tests behaviour through logic\.js/);
+  // QA's own test really loaded logic.js in Node and simulated the jump.
+  assert.deepEqual(events.find((e) => e.type === 'qa.ai-tests').detail.summary.pass, 1);
+  assert.equal(events.find((e) => e.type === 'qa.verdict').status, 'success');
 });
