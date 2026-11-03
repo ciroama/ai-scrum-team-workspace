@@ -78,7 +78,7 @@ export class ClaudeCodeClient {
    * @param {string} [options.binary]  the `claude` command
    * @param {number} [options.timeoutMs]
    */
-  constructor({ model = CLAUDE_CODE.defaultModel, binary = 'claude', timeoutMs = 300_000 } = {}) {
+  constructor({ model = CLAUDE_CODE.defaultModel, binary = 'claude', timeoutMs = 600_000 } = {}) {
     this.model = model;
     this.binary = binary;
     this.timeoutMs = timeoutMs;

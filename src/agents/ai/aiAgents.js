@@ -428,7 +428,8 @@ export class AiQaAgent extends Agent {
       'You are the QA engineer of a small software team.',
       ...roleInstructions('qa'),
       'Criteria that already come with a check (the workspace\'s own rules, such as the entry page) are tested deterministically and always run.',
-      'Besides testing every criterion, find what the criteria miss: write additional automated tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, and flag (as concerns for the PO) where the requirements may not match what the user asked.',
+      'Besides testing every criterion, look for what the criteria miss: a few additional tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, and concerns for the PO where the requirements may not match what the user asked.',
+      'Be economical, like a tester with limited time: prefer a deterministic check (one line) whenever one fits; write a test of your own only when no check fits; at most one test per criterion and at most 3 additional tests from the request; keep every test short, with no comments and no helper code you do not need.',
       PRODUCT_SCOPE,
       'Write ONE ES module (it will be saved as ' + QA_AI_TEST_FILE + ' and run with `node --test-reporter=tap` from the product folder) that:',
       '- uses node:test (`import { test } from "node:test"`) and node:assert/strict; it may also use node:fs, node:path, node:vm, node:module and node:url, and nothing else;',
@@ -442,7 +443,7 @@ export class AiQaAgent extends Agent {
             `The PO wrote the acceptance criteria ${toTest.map((c) => c.id).join(', ')} in words: you turn EACH of them into automated tests. For each one, either:`,
             '- give it a deterministic check in "criteriaChecks" when one of these fits exactly:',
             ...Object.values(WEB_CHECK_TYPES).map((t) => `    * ${t}`),
-            '- or write at least one test of your own named "QA-AI: AC<n> <what it checks>" (e.g. "QA-AI: AC3 the game ends when Abel touches a cat"); the criterion passes only if all its tests pass.',
+            '- or, only when no check fits, write one test of your own named "QA-AI: AC<n> <what it checks>" (e.g. "QA-AI: AC3 the game ends when Abel touches a cat"); the criterion passes only if its test passes.',
             'Test what the criterion says the user gets, through the behaviour the files allow you to run, rather than how the code happens to be written.',
           ]
         : []),
