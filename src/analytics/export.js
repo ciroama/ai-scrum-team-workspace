@@ -129,6 +129,7 @@ export function requestsCsv(source, filter) {
     ['implementation attempts', (r) => r.w.state?.attempt ?? 0],
     ['corrections from QA', (r) => r.corrections],
     ['rework from the PO', (r) => r.poRework],
+    ['requirements corrected by the PO after its review', (r) => eventsOf(r.w.id, 'po.revision').length],
     ['test runs', (r) => r.testRuns.length],
     ['tests in last run', (r) => r.lastRun?.tests ?? null],
     ['tests passed in last run', (r) => r.lastRun?.pass ?? null],

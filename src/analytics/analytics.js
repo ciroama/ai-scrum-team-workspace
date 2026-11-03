@@ -370,6 +370,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poRequirementGaps', 'Requirement gaps found later', fromRequirements, 'by QA\'s own tests or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the requirements: failing QA tests of things you asked that the requirements never stated, and PO rejection reasons marked "requirements".'),
       metric('poBugsRequirements', 'Your bugs traced to its requirements', bugsFromRequirements, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the requirements: they missed or misstated what you wanted.'),
       metric('poConcerns', 'QA concerns it agreed with', concernAnswers.filter((r) => r.decision === 'agree').length, concernAnswers.length ? `of ${concernAnswers.length} answered · ${concernAnswers.filter((r) => r.decision === 'disagree').length} dismissed` : null, SOURCE.recorded, 'The PO\'s explicit answer to each concern QA raised, recorded with its final review.'),
+      metric('poRevised', 'Requirements it corrected after its review', events.filter((e) => e.type === 'po.revision').length, null, SOURCE.recorded, 'Recorded po.revision events: the PO\'s final review found its own requirements wrong (for example against your answers), and the PO corrected them before the Developer changed the product.'),
       metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
       metric('poTeamAnswered', "Team questions it answered", teamAnswered('dev') + teamAnswered('qa'), `${teamPassedOn('dev') + teamPassedOn('qa')} passed on to you`, SOURCE.recorded, 'Questions from the Developer and QA that the PO answered itself (recorded team.answer events), and those it passed on to you (po.escalation events).'),
       metric('poRefused', 'AI answers refused by its rules', refused('po'), null, SOURCE.recorded, refusedBasis('PO')),
@@ -438,7 +439,10 @@ export const rulesOf = (workflow) => workflow.state?.rules?.version ?? 1;
 export function setupOf(workflowId, tasks, events) {
   const setup = {};
   for (const agentId of ['po', 'dev', 'qa']) {
-    const models = [...new Set(events.filter((e) => e.type === 'ai.call' && e.workflowId === workflowId && e.actor === agentId && e.detail?.model).map((e) => shortModel(e.detail.model)))];
+    const calls = events.filter((e) => e.type === 'ai.call' && e.workflowId === workflowId && e.actor === agentId && e.detail?.model);
+    // The model that really answered: a failed call (e.g. a timeout) only knows the name it was asked for.
+    const answered = calls.filter((e) => e.status === 'success');
+    const models = [...new Set((answered.length ? answered : calls).map((e) => shortModel(e.detail.model)))];
     const worked = tasks.some((t) => t.workflowId === workflowId && t.agentId === agentId);
     setup[agentId] = models.length ? models.join(' + ') : worked ? 'scripted' : '—';
   }

@@ -208,7 +208,10 @@ flowchart TD
 5. **Final review (PO).** The PO accepts or rejects the product:
    - It **can never accept** a product that QA did not verify.
    - An AI-powered PO **can reject** a verified product when, from QA's
-     evidence and concerns, it does not really do what you asked. The product then goes
+     evidence and concerns, it does not really do what you asked (your
+     request together with all your answers). If the problem is in its own
+     requirements, the PO first corrects them, then the Developer changes
+     the product and QA verifies it again. The product then goes
      back to the Developer with the PO's reasons, QA verifies the rework,
      and the PO reviews it again, remembering its earlier reasons.
 6. **Limit.** The Developer has **three implementation attempts** in
@@ -231,11 +234,16 @@ models", and the `team rules` column of the requests CSV):
   question on to you; the PO never reads the code.
 - **v3**: as v2, and the PO writes its acceptance criteria in words, never
   how to build or test them; QA decides how to test each one.
-- **v4** (current): as v3, and a product with behaviour keeps all its rules
+- **v4**: as v3, and a product with behaviour keeps all its rules
   in `logic.js`, which must load without a browser (the workspace checks it
   before accepting the Developer's files). QA tests the behaviour through it,
   by simulating the product step by step: tests run in Node, with no screen,
   canvas or keyboard.
+- **v5** (current): as v4, and the PO's final review sees your answers, not
+  only your first message. When the review finds the PO's own requirements
+  wrong, the PO corrects them (a new version) before the Developer changes
+  the product, at most twice per request; the Developer never changes the
+  requirements, and `REQUIREMENTS.md` is not its to write.
 
 Planned for the next release: an approval checkpoint, where the PO waits
 for you to approve the requirements before the Developer starts.

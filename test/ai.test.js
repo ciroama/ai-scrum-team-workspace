@@ -7,7 +7,7 @@ import { ClaudeCodeClient, parseJsonReply } from '../src/ai/claudeCode.js';
 import { validateDevReply, validatePoReply, validateQaReply, validateTeamAnswerReply } from '../src/ai/contracts.js';
 import { ProductOwnerAgent } from '../src/agents/productOwner.js';
 import { requestsCsv } from '../src/analytics/export.js';
-import { computeAnalytics } from '../src/analytics/analytics.js';
+import { computeAnalytics, setupOf } from '../src/analytics/analytics.js';
 import { gitAvailable, tempDir } from './helpers.js';
 
 const REQUEST = 'create a web page with background green and font red. The phrase in the center of page "hello world"';
@@ -819,7 +819,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, DEV_ASKS, PO_ANSWERS, DEV_ASKS, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
-  assert.deepEqual(workflow.state.rules, { version: 4 });
+  assert.deepEqual(workflow.state.rules, { version: 5 });
 
   const question = events.find((e) => e.type === 'team.question');
   assert.equal(question.actor, 'dev');
@@ -849,7 +849,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const csv = requestsCsv(app.repository.analyticsSource(), {});
   const [header, row] = csv.replace(/^﻿/, '').trim().split('\r\n');
   const col = (name) => row.split(',')[header.split(',').indexOf(name)];
-  assert.equal(col('team rules'), 'v4');
+  assert.equal(col('team rules'), 'v5');
   assert.equal(col('Developer questions'), '1');
   assert.equal(col('team questions answered by the PO'), '1');
 });
@@ -997,4 +997,53 @@ test('a product with behaviour keeps its rules in logic.js; QA simulates it with
   const files = (await app.orchestrator.listProductFiles(workflow.id)).files.map((f) => f.path);
   assert.ok(!files.some((f) => f.startsWith('data/')), 'nothing of the workspace ends up inside the product');
   assert.equal(events.find((e) => e.type === 'qa.verdict').status, 'success');
+});
+
+// ---- The PO corrects its own requirements; its review sees the user's answers ----
+
+test("when the PO's review finds its own requirements wrong, the PO corrects them before the Developer changes the product", async (t) => {
+  const asks = { content: { status: 'needs_clarification', reason: 'ambiguous', questions: [{ question: 'Which colour is the text?' }] } };
+  const wrongReq = { content: { ...PO_SPEC, assumptions: [{ text: 'The text is red.', decidedBy: 'user' }] } };
+  const reject = { content: { decision: 'reject', summary: 'Not accepted: the user answered blue, but my requirements say red.', reasons: [{ text: 'The requirements say red; the user answered blue', origin: 'requirements' }] } };
+  const corrected = { content: { ...PO_SPEC, requirements: ['The page background is green.', 'The text is blue.', 'The phrase "hello world" is shown in the centre of the page.'], acceptanceCriteria: PO_SPEC.acceptanceCriteria.map((c, i) => (i === 2 ? { description: 'The text is blue.' } : c)), changes: ['Changed: the text is blue, as the user answered (was red).'], assumptions: [{ text: 'The text is blue.', decidedBy: 'user' }] } };
+  const blueQa = MAPPING_QA();
+  blueQa.content.criteriaChecks = CRITERIA_CHECKS.map((c) => (c.criterion === 'AC3' ? { criterion: 'AC3', check: { type: 'cssProperty', property: 'color', value: 'blue' } } : c));
+  const { app, claude } = await aiApp(
+    t,
+    [asks, wrongReq, { content: page('red') }, MAPPING_QA(), reject, corrected, { content: page('blue') }, blueQa, ACCEPT],
+    { qaMode: 'ai' },
+  );
+  const { workflow } = await run(app, 'make me a page');
+  const done = await app.orchestrator.answer(workflow.id, 'blue text').done;
+  assert.equal(done.status, 'completed');
+  assert.equal(done.state.spec.version, 2, 'a corrected version of the requirements');
+  assert.equal(done.state.attempt, 2);
+
+  const events = app.repository.listEvents(workflow.id);
+  const revision = events.find((e) => e.type === 'po.revision');
+  assert.deepEqual(revision.detail.reasons, ['The requirements say red; the user answered blue']);
+  assert.ok(!events.some((e) => e.type === 'handoff' && e.from === 'po' && e.to === 'dev' && e.status === 'failure'), 'not sent to the Developer as rework');
+
+  const received = await claude.received();
+  // The review saw the user's answers.
+  const review = JSON.parse(received[4].stdin);
+  assert.deepEqual(review.userAnswers.map((d) => d.answer), ['blue text']);
+  // The PO corrected its requirements, knowing its findings and the answers.
+  const fix = JSON.parse(received[5].stdin);
+  assert.deepEqual(fix.yourReviewFindings, ['The requirements say red; the user answered blue']);
+  assert.equal(fix.clarificationDialogue[0].answer, 'blue text');
+  assert.match(option(received[5].args, '--system-prompt'), /REVISION: your own final review found/);
+  // The Developer then changed the existing product to the corrected requirements.
+  const dev = JSON.parse(received[6].stdin.slice(received[6].stdin.indexOf('{')));
+  assert.ok(dev.currentFiles.some((f) => f.path === 'style.css' && f.content.includes('red')));
+  assert.deepEqual(dev.changesToRequirements, ['Changed: the text is blue, as the user answered (was red).']);
+
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.equal(p.po.find((m) => m.key === 'poRevised').value, 1);
+});
+
+test('the Developer cannot change the requirements; a failed call does not split the model setup', () => {
+  assert.throws(() => validateDevReply({ files: [{ path: 'index.html', content: '<p>hi</p>' }, { path: 'REQUIREMENTS.md', content: 'golden bone: 5' }] }), /REQUIREMENTS\.md belongs to the PO/);
+  const call = (status, model) => ({ type: 'ai.call', workflowId: 'w', actor: 'dev', status, detail: { model } });
+  assert.equal(setupOf('w', [], [call('failure', 'sonnet'), call('success', 'claude-sonnet-5-5')]).dev, 'sonnet 5.5');
 });

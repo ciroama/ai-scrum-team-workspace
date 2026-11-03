@@ -26,8 +26,14 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  *    how to test each one.
  * 4: as 3, and a product with behaviour keeps its rules in logic.js, which
  *    loads without a browser: QA tests the behaviour through it.
+ * 5: as 4, and the PO's final review sees the user's answers; when the PO
+ *    finds its own requirements wrong, it corrects them before any rework
+ *    (the Developer never changes the requirements).
  */
-export const TEAM_RULES_VERSION = 4;
+export const TEAM_RULES_VERSION = 5;
+
+/** How many times the PO may correct its own requirements in one request. */
+const MAX_REVISIONS = 2;
 const OUTPUT_LIMIT = 20_000;
 const MAX_FILE_PREVIEW = 200_000;
 
@@ -655,7 +661,16 @@ export class Orchestrator {
     const { workflow, agent, say } = ctx;
     const base = workflow.state.base ?? null;
     const dialogue = workflow.state.dialogue ?? [];
-    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base, dialogue, requestType: workflow.state.requestType ?? null });
+    // A revision: the PO's own review found its requirements wrong, and it corrects them.
+    const revision = workflow.state.revision ?? null;
+    const result = await agent.analyse({
+      requestText: workflow.requestText,
+      recipes: this.recipes,
+      current: revision ? { spec: revision.previousSpec, version: revision.previousSpec.version ?? 1 } : base,
+      dialogue,
+      requestType: workflow.state.requestType ?? null,
+      revision: revision?.reasons ?? null,
+    });
     this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
@@ -684,7 +699,13 @@ export class Orchestrator {
       };
     }
 
-    const { spec } = result;
+    let { spec } = result;
+    if (revision) {
+      // A corrected version of the same request: it keeps what kind of request it is.
+      const { requestType: _type, bugOrigin: _origin, ...rest } = spec;
+      const previous = revision.previousSpec;
+      spec = { ...rest, ...(previous.requestType ? { requestType: previous.requestType } : {}), ...(previous.bugOrigin ? { bugOrigin: previous.bugOrigin } : {}), correctedAfterReview: true };
+    }
     await this.#writeFiles(ctx, [result.document]);
     say({
       type: 'po.requirements',
@@ -704,7 +725,10 @@ export class Orchestrator {
     say({ type: 'handoff', category: 'handoff', from: agent.id, to: 'dev', summary: handoff.message, detail: { references: handoff.references } });
     return {
       output: { summary: result.summary, recipeId: spec.recipeId },
-      update: { recipeId: spec.recipeId, title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, attempt: 0 } },
+      update: revision
+        ? // The Developer changes the existing product to the corrected requirements; its attempts are not reset.
+          { title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, revision: null, previousSpec: revision.previousSpec } }
+        : { recipeId: spec.recipeId, title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, attempt: 0 } },
     };
   }
 
@@ -716,7 +740,8 @@ export class Orchestrator {
     // Rework after the PO rejected a verified product, or a correction of QA's defects.
     const defects = correcting ? (state.poFeedback ?? state.verification?.defects ?? []) : [];
 
-    const changing = Boolean(state.base);
+    // A change request, or requirements the PO corrected: the existing product changes.
+    const changing = Boolean(state.base) || Boolean(state.previousSpec);
     const currentFiles =
       correcting || changing ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path)) : [];
     const askKey = `dev:${stage.id}:${attempt}`;
@@ -725,7 +750,7 @@ export class Orchestrator {
       attempt,
       defects,
       currentFiles,
-      change: changing ? { previousSpec: state.base.spec } : null,
+      change: changing ? { previousSpec: state.previousSpec ?? state.base.spec } : null,
       canAsk: !state.asked?.[askKey],
       teamClarifications: state.teamClarifications ?? [],
     });
@@ -747,7 +772,7 @@ export class Orchestrator {
     const files = written.map((f) => f.path);
     return {
       output: { summary: result.summary, files, commit },
-      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt } } },
+      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt }, previousSpec: null } },
     };
   }
 
@@ -863,7 +888,7 @@ export class Orchestrator {
     const state = workflow.state;
     const rejections = state.poRejections ?? [];
     // The PO never receives the code: it judges by the request, the requirements and QA's evidence.
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections, teamClarifications: state.teamClarifications ?? [] });
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections, teamClarifications: state.teamClarifications ?? [], dialogue: state.dialogue ?? [] });
     this.#recordAiCalls(ctx, review.aiCalls);
     const { aiCalls: _calls, ...decision } = review;
     const qaPassed = state.verification?.verdict === 'pass';
@@ -883,6 +908,29 @@ export class Orchestrator {
         rework,
       },
     });
+
+    // The requirements are the PO's: when its review finds them wrong, the PO
+    // corrects them first. The Developer never changes the requirements.
+    const requirementsWrong = !review.accepted && (review.reasonOrigins ?? []).includes('requirements') && (state.revisions ?? 0) < MAX_REVISIONS;
+    if (requirementsWrong) {
+      const reasons = review.reasons?.length ? review.reasons : [review.summary];
+      say({
+        type: 'po.revision',
+        from: agent.id,
+        to: agent.id,
+        status: 'warning',
+        summary: `Not accepted yet: the requirements themselves are wrong, so the PO corrects them before the Developer changes the product. ${review.summary}`,
+        detail: { reasons, origins: review.reasonOrigins ?? [] },
+      });
+      return {
+        output: { summary: review.summary, accepted: false, revision: true },
+        update: {
+          stage: 'analysis',
+          verified: false,
+          state: { ...state, review: decision, revision: { reasons, previousSpec: state.spec }, revisions: (state.revisions ?? 0) + 1, poRejections: [...rejections, { attempt: state.attempt, summary: review.summary, reasons }] },
+        },
+      };
+    }
 
     if (rework) {
       const reasons = review.reasons?.length ? review.reasons : [review.summary];

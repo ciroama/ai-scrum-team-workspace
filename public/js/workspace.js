@@ -400,6 +400,9 @@ function conversationItems(state, detail, ui, actions) {
           ]),
         );
         break;
+      case 'po.revision':
+        items.push(agentMessage(state, event, [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.reasons || []).map((r) => h('li', null, h('span', { className: 'num' }, '•'), h('span', null, r))))]));
+        break;
       case 'team.answer':
         items.push(
           agentMessage(state, event, [

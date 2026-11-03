@@ -126,8 +126,8 @@ export class AiProductOwnerAgent extends Agent {
     this.rules = scripted;
   }
 
-  async analyse({ requestText, current = null, dialogue = [], requestType = null }) {
-    const bug = Boolean(current) && requestType === 'bug';
+  async analyse({ requestText, current = null, dialogue = [], requestType = null, revision = null }) {
+    const bug = Boolean(current) && requestType === 'bug' && !revision;
     const system = [
       'You are the Product Owner (PO) of a small software team.',
       ...roleInstructions('po'),
@@ -144,7 +144,15 @@ export class AiProductOwnerAgent extends Agent {
             '- Return the COMPLETE lists. If the report is unclear (what happens, when, what was expected), ask first.',
           ]
         : []),
-      ...(current && !bug
+      ...(revision
+        ? [
+            'REVISION: your own final review found that the requirements you agreed are wrong. You receive them, the user\'s original request, the clarification dialogue and your review findings.',
+            '- Correct the requirements and acceptance criteria so they match the user\'s request together with EVERY answer the user gave (an answer can change the original request).',
+            '- Keep everything that was right, unchanged. Return the COMPLETE corrected lists, and list what you corrected in "changes".',
+            '- If only the user can settle it, answer with status "needs_clarification" and ask.',
+          ]
+        : []),
+      ...(current && !bug && !revision
         ? [
             'The product already exists. You receive its current requirements and acceptance criteria, and a change request from the user.',
             'Apply the change request to the current requirements:',
@@ -183,7 +191,7 @@ export class AiProductOwnerAgent extends Agent {
       ? JSON.stringify(
           {
             currentRequirements: { version: current.version, title: current.spec.title, requirements: current.spec.requirements, acceptanceCriteria: current.spec.acceptanceCriteria },
-            ...(bug ? { bugReport: requestText } : { changeRequest: requestText }),
+            ...(revision ? { originalRequest: requestText, yourReviewFindings: revision } : bug ? { bugReport: requestText } : { changeRequest: requestText }),
             ...(dialogue.length ? { clarificationDialogue: dialogue } : {}),
           },
           null,
@@ -198,7 +206,7 @@ export class AiProductOwnerAgent extends Agent {
       system,
       user,
       validate: (reply) => validatePoReply(reply, { firstRound: dialogue.length === 0, bug }),
-      purpose: bug ? 'analyse the bug report' : current ? 'apply the change request to the requirements' : 'analyse the request',
+      purpose: revision ? 'correct its own requirements' : bug ? 'analyse the bug report' : current ? 'apply the change request to the requirements' : 'analyse the request',
     });
 
     if (value.status === 'needs_clarification') {
@@ -246,16 +254,17 @@ export class AiProductOwnerAgent extends Agent {
    * whether the code is right is for QA to show. Guard: it may reject a
    * product whose tests pass, but cannot accept one QA did not verify.
    */
-  async review({ spec, verification, previousRejections = [], teamClarifications = [] }) {
+  async review({ spec, verification, previousRejections = [], teamClarifications = [], dialogue = [] }) {
     const evidence = this.rules.review({ spec, verification });
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
       'You are the Product Owner (PO) of a small software team, doing the final review of an increment.',
       ...roleInstructions('po'),
-      'You receive the user\'s request, the agreed requirements and acceptance criteria, and the result of QA\'s verification. You do not see the code: as a PO you judge the product by the request, the requirements and QA\'s evidence, never by reading the implementation.',
+      'You receive the user\'s request, the user\'s answers to your questions, the agreed requirements and acceptance criteria, and the result of QA\'s verification. You do not see the code: as a PO you judge the product by the request, the answers, the requirements and QA\'s evidence, never by reading the implementation.',
+      '- The user\'s answers complete the request and can change it (e.g. a different value than the request first said): what the user asked is the request together with every answer.',
       'Decide whether to accept the product:',
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
-      '- Reject if QA did not verify every criterion, or if QA\'s evidence shows the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons the Developer can act on: a rejected product goes back to the Developer for rework.',
+      '- Reject if QA did not verify every criterion, or if QA\'s evidence shows the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons: a reason in the code goes back to the Developer for rework; a reason in the requirements comes back to you, to correct your requirements first.',
       '- If you rejected earlier versions, check whether your reasons were addressed. Do not invent new demands beyond the request and the requirements.',
       '- If QA raised concerns that the requirements may not match the request, weigh them against the request: reject if the product misses what the user asked.',
       qaPassed ? 'QA verified every acceptance criterion.' : 'QA did NOT verify every acceptance criterion: you must reject.',
@@ -266,6 +275,8 @@ export class AiProductOwnerAgent extends Agent {
     const user = JSON.stringify(
       {
         request: spec.requestText,
+        ...(dialogue.length ? { userAnswers: dialogue } : {}),
+        assumptions: spec.assumptions ?? [],
         requirements: spec.requirements,
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
         qaVerification: verification

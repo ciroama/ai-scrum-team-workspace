@@ -300,6 +300,7 @@ export function validateDevReply(reply, { canAsk = false } = {}) {
       if (seen.has(f.path)) problems.push(`${where}: duplicate path ${f.path}.`);
       seen.add(f.path);
       if (f.path.startsWith('test/') || f.path.startsWith('qa/')) problems.push(`${where}: the test/ and qa/ folders are reserved for QA.`);
+      if (f.path === 'REQUIREMENTS.md') problems.push(`${where}: REQUIREMENTS.md belongs to the PO; the requirements are not yours to change. If they look wrong, the PO decides.`);
       if (!ALLOWED_EXTENSIONS.some((ext) => f.path.toLowerCase().endsWith(ext))) problems.push(`${where}: only ${ALLOWED_EXTENSIONS.join(' ')} files are allowed.`);
     }
     if (typeof f?.content !== 'string') problems.push(`${where}: "content" must be a string.`);
