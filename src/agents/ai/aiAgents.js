@@ -16,6 +16,34 @@ import { AiUnavailableError } from '../../ai/claudeCode.js';
 import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, MAX_TEAM_QUESTIONS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply, validateTeamAnswerReply } from '../../ai/contracts.js';
 import { QaAgent } from '../qa.js';
 import { roleInstructions } from '../scrumRoles.js';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { runCommand } from '../../actions/runCommand.js';
+
+/** The first useful line of an error output (the error itself, not Node's internal location). */
+export function errorLine(output) {
+  const lines = String(output ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /\b\w*Error\b[:\s]|ERR_[A-Z_]+/.test(l)) ?? lines[0] ?? 'no error output';
+}
+
+/**
+ * Runs QA's test file once, read-only, before it is accepted: a file that
+ * crashes before its tests run is sent back to QA with the error, so QA fixes
+ * it in the same request instead of blocking the verification.
+ */
+async function dryRun(dir, source) {
+  const path = join('qa', '.dry-run.mjs');
+  await mkdir(join(dir, 'qa'), { recursive: true });
+  await writeFile(join(dir, path), source);
+  try {
+    const run = await runCommand({ command: process.execPath, args: ['--permission', `--allow-fs-read=${dir}`, '--test-reporter=tap', path], cwd: dir, timeoutMs: 60_000 });
+    if (run.timedOut) return 'the tests did not finish within 60 s (an endless loop or a timer that never stops?)';
+    const ran = /^\s*(not )?ok \d+/m.test(run.stdout);
+    return run.exitCode !== 0 && !ran ? errorLine(run.stderr || run.stdout) : null;
+  } finally {
+    await rm(join(dir, path), { force: true });
+  }
+}
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
 
@@ -54,7 +82,7 @@ async function askWithContract(getClient, { system, user, validate, purpose }) {
       throw error;
     }
     try {
-      const value = validate(answer.json);
+      const value = await validate(answer.json);
       aiCalls.push({ purpose, attempt, ok: true, model: answer.model, durationMs: answer.durationMs, usage: answer.usage });
       return { value, aiCalls };
     } catch (error) {
@@ -421,7 +449,7 @@ export class AiQaAgent extends Agent {
     this.rules = scripted;
   }
 
-  async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [] }) {
+  async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [], dir = null }) {
     // The PO writes its criteria in words: QA decides how to test each one.
     const toTest = spec.acceptanceCriteria.filter((c) => !c.check);
     const system = [
@@ -435,6 +463,7 @@ export class AiQaAgent extends Agent {
       '- uses node:test (`import { test } from "node:test"`) and node:assert/strict; it may also use node:fs, node:path, node:vm, node:module and node:url, and nothing else;',
       '- names every test "QA-AI: <what it checks>";',
       '- reads product files relative to process.cwd() (the product folder); it has READ-ONLY access, no network and cannot start processes;',
+      '- reads files only inside each test, never at the top of the module, and only files that exist in "files": then a problem fails one test, not the whole file;',
       '- tests behaviour where the files allow it: plain .js files that export functions for Node can be loaded with createRequire(import.meta.url)("../file.js"); otherwise check the HTML, CSS and scripts as text;',
       '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
       'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
@@ -467,7 +496,13 @@ export class AiQaAgent extends Agent {
     const { value, aiCalls } = await askWithContract(this.getClient, {
       system,
       user,
-      validate: (reply) => validateQaReply(reply, { canAsk, criteria: toTest.map(({ id, description }) => ({ id, description })) }),
+      validate: async (reply) => {
+        const value = validateQaReply(reply, { canAsk, criteria: toTest.map(({ id, description }) => ({ id, description })) });
+        if (value.status === 'questions' || !dir) return value;
+        const crash = await dryRun(dir, value.testFile);
+        if (crash) throw new ContractError([`Your test file crashed before its tests could run: ${crash}. Read files inside each test with paths relative to the product folder, only files that exist, and keep the module free of top-level code that can fail.`]);
+        return value;
+      },
       purpose: 'write QA tests from the request',
     });
     if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
@@ -504,7 +539,7 @@ export class AiQaAgent extends Agent {
     const problem = run && (run.timedOut || (!tests.length && run.exitCode !== 0)) ? (run.stderr || run.stdout).trim().slice(0, 1500) || `exit code ${run.exitCode}` : null;
     if (problem && ownIds.size) {
       // Criteria only QA's own tests can verify: the product is not to blame, QA must write its tests again.
-      throw new AgentBlockedError(`QA's own tests could not run, and criteria ${[...ownIds].join(', ')} can only be verified by them (${problem.split('\n')[0].slice(0, 200)}). Click Resume: QA writes its tests again.`);
+      throw new AgentBlockedError(`QA's own tests could not run, and criteria ${[...ownIds].join(', ')} can only be verified by them (${errorLine(problem).slice(0, 200)}). Click Resume: QA writes its tests again.`);
     }
     const aiDefects = failed.map((t) => ({
       title: `${t.name} failed`,

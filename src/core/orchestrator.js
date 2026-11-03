@@ -760,6 +760,7 @@ export class Orchestrator {
       files: productFiles,
       canAsk: !state.asked?.[askKey],
       teamClarifications: state.teamClarifications ?? [],
+      dir: ctx.dir,
     });
     this.#recordAiCalls(ctx, plan.aiCalls);
     if (plan.status === 'questions') return this.#asked(ctx, { from: 'qa', askKey, questions: plan.questions });

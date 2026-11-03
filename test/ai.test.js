@@ -684,14 +684,16 @@ test('AI-written tests cannot write files or start processes, and a broken file 
   assert.throws(() => validateQaReply({ testFile: "test('QA-AI: x', () => { if ( });" }), /does not parse/);
 });
 
-test("a QA (AI) test file that crashes is QA's problem: the deterministic checks decide", async (t) => {
+test("a QA (AI) test file that crashes is tried before it is accepted: QA gets the error and fixes it", async (t) => {
   const broken = qaTests(`throw new Error('QA forgot something');\ntest('QA-AI: never runs', () => {});`);
-  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, broken, ACCEPT], { qaMode: 'ai' });
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, broken, PASSING_QA, ACCEPT], { qaMode: 'ai' });
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed', 'not blamed on the Developer');
-  const warning = events.find((e) => e.type === 'qa.ai-tests-failed');
-  assert.match(warning.error, /QA forgot something/);
+  const received = await claude.received();
+  assert.match(received[3].stdin, /Your test file crashed before its tests could run: Error: QA forgot something/);
   assert.ok(!events.some((e) => e.type === 'defect.reported'));
+  assert.ok(!events.some((e) => e.type === 'qa.ai-tests-failed'), 'the accepted file runs');
+  assert.ok(!(await app.orchestrator.listProductFiles(workflow.id)).files.some((f) => f.path.includes('.dry-run')), 'the trial file is removed');
 });
 
 test('team process statistics: PO questions one by one, Developer mistakes caught by QA, work sent back by the PO', async (t) => {
@@ -926,7 +928,7 @@ test("QA may cover a criterion with its own tests: the criterion passes only if 
   assert.equal(events.filter((e) => e.type === 'test.results')[0].detail.summary.tests, 4);
 });
 
-test("when QA's own tests crash and a criterion depends on them, the request blocks: it is not the product's fault", async (t) => {
+test("when QA cannot write tests that run, the request blocks: it is not the product's fault", async (t) => {
   const crashing = {
     content: {
       summary: 'AC4 with my own test.',
@@ -934,10 +936,10 @@ test("when QA's own tests crash and a criterion depends on them, the request blo
       testFile: "import { test } from 'node:test';\nimport { readFileSync } from 'node:fs';\nreadFileSync('missing.txt');\ntest('QA-AI: AC4 the phrase is centred', () => {});\n",
     },
   };
-  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, crashing], { qaMode: 'ai' });
+  const { app } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, crashing, crashing], { qaMode: 'ai' });
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'blocked');
-  assert.match(workflow.blockedReason, /QA's own tests could not run, and criteria AC4 can only be verified by them.*Click Resume/);
+  assert.match(workflow.blockedReason, /QA \(AI\) could not do its work.*crashed before its tests could run: Error: ENOENT: no such file or directory, open 'missing.txt'/);
   assert.ok(!events.some((e) => e.type === 'defect.reported'), 'no defect is blamed on the product');
 });
 
