@@ -15,6 +15,7 @@ import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
 import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, MAX_TEAM_QUESTIONS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply, validateTeamAnswerReply } from '../../ai/contracts.js';
 import { QaAgent } from '../qa.js';
+import { roleInstructions } from '../scrumRoles.js';
 
 export const AI_WEB_RECIPE_ID = 'ai-static-web';
 
@@ -80,6 +81,7 @@ export class AiProductOwnerAgent extends Agent {
     const bug = Boolean(current) && requestType === 'bug';
     const system = [
       'You are the Product Owner (PO) of a small software team.',
+      ...roleInstructions('po'),
       PRODUCT_SCOPE,
       'Behave like a real PO in backlog refinement: never build on guesses. Before writing requirements, look for everything the request leaves open: what exactly it is, scope, content and texts, look and layout, behaviour and rules, controls, states (start, end, errors, empty), edge cases, and how success is judged.',
       'When anything that matters is open, stop and ask (status "needs_clarification"): several numbered questions at once, each with why it matters and, where useful, a few options. A short request like "build a game" always needs questions.',
@@ -200,6 +202,7 @@ export class AiProductOwnerAgent extends Agent {
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
       'You are the Product Owner (PO) of a small software team, doing the final review of an increment.',
+      ...roleInstructions('po'),
       'You receive the user\'s request, the agreed requirements and acceptance criteria, and the result of QA\'s verification. You do not see the code: as a PO you judge the product by the request, the requirements and QA\'s evidence, never by reading the implementation.',
       'Decide whether to accept the product:',
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
@@ -260,6 +263,7 @@ export class AiProductOwnerAgent extends Agent {
     const asker = from === 'dev' ? 'Developer' : 'QA';
     const system = [
       'You are the Product Owner (PO) of a small software team.',
+      ...roleInstructions('po'),
       `The ${asker} asked you questions before doing their work. Answer each one as the PO: from the user's request, the agreed requirements, the assumptions and everything the user already told you.`,
       '- Answer yourself when the answer follows from what is agreed, or is a product detail the user left to you ("you decide").',
       '- Pass a question on to the user ("askUser": true) when only the user can decide it: it changes what the user gets and nothing agreed so far settles it. Say why in "why".',
@@ -322,7 +326,7 @@ export class AiDeveloperAgent extends Agent {
         label: 'Developer',
         title: 'Developer',
         summary: 'Writes the product files with an AI model and fixes the problems reported by QA or the PO.',
-        responsibilities: ['Implements the requirements', 'Creates and modifies project files', 'Fixes defects reported by QA and rework asked by the PO', 'Hands the implementation to QA'],
+        responsibilities: ['Decides how to build what the PO asks', 'Asks the PO when what to build is unclear', 'Fixes defects reported by QA and rework asked by the PO', 'Meets the Definition of Done before handing over to QA'],
       },
       AgentKind.AI,
     );
@@ -333,6 +337,7 @@ export class AiDeveloperAgent extends Agent {
     const correcting = defects.length > 0;
     const system = [
       'You are the Developer of a small software team.',
+      ...roleInstructions('dev'),
       PRODUCT_SCOPE,
       'Implement the requirements so that every acceptance criterion is met. QA turns each criterion into automated tests and checks it.',
       ...(change && !correcting
@@ -408,7 +413,7 @@ export class AiQaAgent extends Agent {
       {
         ...scripted.profile,
         summary: 'Runs the deterministic acceptance checks, then writes and runs its own tests with an AI model, from your request and answers, and flags requirements that may not match.',
-        responsibilities: [...scripted.profile.responsibilities, 'Writes extra tests from your original request', 'Flags requirements that may not match the request'],
+        responsibilities: ['Decides how each acceptance criterion is tested, and writes the tests', 'Asks the PO when what is wanted is unclear', 'Reports defects to the Developer and concerns to the PO, with evidence', 'Holds the team to the Definition of Done; re-tests every correction'],
       },
       AgentKind.AI,
     );
@@ -420,8 +425,10 @@ export class AiQaAgent extends Agent {
     // The PO writes its criteria in words: QA decides how to test each one.
     const toTest = spec.acceptanceCriteria.filter((c) => !c.check);
     const system = [
-      'You are the QA engineer of a small software team. The deterministic acceptance tests for the PO\'s criteria already exist and always run.',
-      'Your job is to find what they miss: write additional automated tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, not only from the PO\'s criteria, and flag where the requirements may not match what the user asked.',
+      'You are the QA engineer of a small software team.',
+      ...roleInstructions('qa'),
+      'Criteria that already come with a check (the workspace\'s own rules, such as the entry page) are tested deterministically and always run.',
+      'Besides testing every criterion, find what the criteria miss: write additional automated tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, and flag (as concerns for the PO) where the requirements may not match what the user asked.',
       PRODUCT_SCOPE,
       'Write ONE ES module (it will be saved as ' + QA_AI_TEST_FILE + ' and run with `node --test-reporter=tap` from the product folder) that:',
       '- uses node:test (`import { test } from "node:test"`) and node:assert/strict; it may also use node:fs, node:path, node:vm, node:module and node:url, and nothing else;',

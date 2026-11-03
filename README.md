@@ -89,6 +89,31 @@ add noise to what is being observed.
 | **QA** (Quality Assurance) | Scripted or AI-powered | Turns every acceptance criterion into automated tests, runs them, reports results and defects, and re-tests every correction. When AI-powered, it decides how to test each criterion of the AI-powered PO, writes tests of its own from your original request, and flags requirements that may not match it |
 | Orchestrator | Infrastructure | Assigns each stage to the responsible agent if it is enabled, executes the work, records every step |
 
+### Roles, as the Scrum Guide defines them
+
+The agents follow the accountabilities of the
+[Scrum Guide (2020)](https://scrumguides.org/scrum-guide.html). Each AI
+agent receives its role in its instructions (`src/agents/scrumRoles.js`):
+
+| Role | Accountable for (Scrum Guide) | In this workspace | Never |
+|---|---|---|---|
+| **Product Owner** | Maximising the value of the product; creating, communicating and ordering the Product Backlog items so they are understood | Decides **what** is built and **why**: clarifies with you, writes requirements and acceptance criteria in your words, answers the Developer's and QA's questions, judges the result from QA's evidence | Says **how** to build or test it: no files, code, technical choices or tests; never reads the code |
+| **Developers** | Creating a usable Increment; planning the work; instilling quality by meeting the Definition of Done. How the work is done is their decision alone | **Developer**: decides **how** to build what the PO asks, asks the PO when *what* is unclear, fixes defects and rework | Changes the requirements or writes QA's tests |
+| | | **QA**: Scrum has no separate tester role, so QA is a Developer specialised in testing. Decides **how** each criterion is verified, writes the tests, holds the team to the Definition of Done | Changes the requirements (it raises a concern to the PO) or the product (it reports a defect to the Developer) |
+
+There is no Scrum Master agent: the orchestrator only runs the process
+(who works next, what is recorded), and you are the user and stakeholder.
+
+**Definition of Done**, the quality every increment must meet before the
+PO can accept it:
+
+- Every acceptance criterion is covered by at least one automated test
+  written by QA, and every test passes.
+- The product opens from `index.html` directly from disk and works offline.
+- No open defects: everything QA or the PO reported is fixed and verified
+  again.
+- The work is committed to the product's own Git repository.
+
 ### Scripted or AI-powered
 
 You choose each agent's **Brain** on the Team page:

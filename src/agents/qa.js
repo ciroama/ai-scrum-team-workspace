@@ -184,10 +184,10 @@ export class QaAgent extends ScriptedAgent {
       title: 'Quality Assurance',
       summary: 'Turns the acceptance criteria into tests, runs real verification commands and reports defects.',
       responsibilities: [
-        'Reviews the acceptance criteria',
-        'Runs automated tests and verification commands',
-        'Reports results and defects with evidence',
-        'Re-tests corrections',
+        'Turns every acceptance criterion into automated tests',
+        'Runs the tests and verification commands',
+        'Reports defects to the Developer with evidence',
+        'Holds the team to the Definition of Done; re-tests corrections',
       ],
     });
   }

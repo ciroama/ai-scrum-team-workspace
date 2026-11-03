@@ -171,6 +171,13 @@ test('AI PO and AI Developer build exactly what was asked; QA turns the PO\'s cr
   // Every detail became a criterion in words, plus the entry page added by the workspace (with its check).
   const spec = workflow.state.spec;
   assert.deepEqual(spec.acceptanceCriteria.map((c) => c.check?.type ?? null), [null, null, null, null, 'fileExists']);
+  // Every agent is told its Scrum accountability, and the Developers the Definition of Done.
+  const prompt = (i) => option(received[i].args, '--system-prompt');
+  assert.match(prompt(0), /You decide WHAT is built and WHY, never HOW/);
+  assert.match(prompt(1), /How to build it is your decision: nobody else tells you how[\s\S]*Definition of Done[\s\S]*covered by at least one automated test written by QA/);
+  assert.match(prompt(2), /Scrum has no separate tester role; you are one of the Developers, specialised in testing[\s\S]*Definition of Done/);
+  assert.match(prompt(3), /you never read or review the code/);
+  assert.doesNotMatch(prompt(0), /Definition of Done/);
   // QA turned each of the PO's criteria into a test.
   assert.match(option(received[2].args, '--system-prompt'), /The PO wrote the acceptance criteria AC1, AC2, AC3, AC4 in words/);
 
