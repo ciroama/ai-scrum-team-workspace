@@ -1,4 +1,4 @@
-import { ScriptedAgent } from './agent.js';
+import { AgentBlockedError, ScriptedAgent } from './agent.js';
 
 export const ACCEPTANCE_TEST_FILE = 'test/acceptance.test.mjs';
 
@@ -202,6 +202,14 @@ export class QaAgent extends ScriptedAgent {
    */
   planVerification({ spec, implementation }) {
     const criteria = spec.acceptanceCriteria;
+    const inWords = criteria.filter((c) => !c.check);
+    if (inWords.length) {
+      // An AI-powered PO writes its criteria in words; only an AI-powered QA can turn them into tests.
+      throw new AgentBlockedError(
+        `The PO wrote acceptance criteria ${inWords.map((c) => c.id).join(', ')} in words, and the scripted QA can only test criteria that come with a test from its recipes. Make QA AI-powered on the Team page, then click Resume.`,
+        'configuration',
+      );
+    }
     const requiredFiles = [...new Set([...implementation.files, ...criteria.flatMap(checkedFiles)])];
     const commands = [
       { id: 'tests', kind: 'tests', label: 'Run all automated tests', args: ['--test', '--test-reporter=tap'] },

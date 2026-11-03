@@ -10,7 +10,7 @@
 //  - The PO's final review is a model decision, but it can only reject what
 //    QA did not verify; it can never accept it.
 
-import { Agent, AgentKind } from '../agent.js';
+import { Agent, AgentBlockedError, AgentKind } from '../agent.js';
 import { ProductOwnerAgent } from '../productOwner.js';
 import { AiUnavailableError } from '../../ai/claudeCode.js';
 import { ContractError, MAX_CRITERIA, MAX_REQUIREMENTS, MAX_TEAM_QUESTIONS, QA_AI_TEST_FILE, WEB_CHECK_TYPES, validateDevReply, validatePoReply, validateQaReply, validateReviewReply, validateTeamAnswerReply } from '../../ai/contracts.js';
@@ -117,15 +117,15 @@ export class AiProductOwnerAgent extends Agent {
       dialogue.length
         ? '- The user has answered questions, so "decidedBy": "po" is allowed for what the user left to you.'
         : '- The user has not answered anything yet: every assumption must be "decidedBy": "user", and "whyNoQuestions" must explain why nothing is left open. Otherwise ask.',
+      '- Write requirements and acceptance criteria as the user would: what the user sees, does and gets. Never name files, functions, variables, code structure, libraries, CSS or other technical choices: how to build it is the Developer\'s decision, and how to test it is QA\'s.',
+      '- Each acceptance criterion is one sentence a person can check by using the product (e.g. "When Abel touches a cat, the game ends and the final score is shown"). QA turns every criterion into automated tests; you do not write tests.',
       '- Use texts exactly as the user wrote them (same words and capitalisation).',
-      '- For colours use CSS colour names or hex codes, e.g. "green" or "#00aa00".',
+      '- Name colours precisely, e.g. "green" or "#00aa00".',
       `- At most ${MAX_REQUIREMENTS} requirements and ${MAX_CRITERIA} acceptance criteria, each under 1000 characters. They describe the whole product, so merge overlapping ones rather than only adding.`,
-      '- Every acceptance criterion needs a machine-checkable "check" of one of these types (nothing else is allowed):',
-      ...Object.values(WEB_CHECK_TYPES).map((t) => `  * ${t}`),
       'Answer with a JSON object only, in this shape:',
       current
-        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],' + (bug ? '"bugOrigin":"requirements" | "implementation",' : '') + '"requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}'
-        : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"...","check":{...}}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}',
+        ? '{"status":"ready","title":"short product name","summary":"one sentence","changes":["Added: ...","Changed: ...","Removed: ..."],' + (bug ? '"bugOrigin":"requirements" | "implementation",' : '') + '"requirements":["..."],"acceptanceCriteria":[{"description":"..."}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}'
+        : '{"status":"ready","title":"short product name","summary":"one sentence","requirements":["..."],"acceptanceCriteria":[{"description":"..."}],"assumptions":[{"text":"...","decidedBy":"user" | "po"}],"whyNoQuestions":"only when the user has not answered anything yet","handoffMessage":"message to the Developer"}',
       'or {"status":"needs_clarification","reason":"ambiguous" | "unsupported","message":"one short sentence for the user","questions":[{"question":"...","why":"why it matters","options":["...","..."]}]}',
     ].join('\n');
     const user = current
@@ -334,7 +334,7 @@ export class AiDeveloperAgent extends Agent {
     const system = [
       'You are the Developer of a small software team.',
       PRODUCT_SCOPE,
-      'Implement the requirements so that every acceptance criterion passes. QA will check them with automated tests based on each criterion\'s "check".',
+      'Implement the requirements so that every acceptance criterion is met. QA turns each criterion into automated tests and checks it.',
       ...(change && !correcting
         ? ['The product already exists: you receive its current files and the updated requirements. Change the existing files so the product meets the updated requirements, and keep everything else as it is. Return the complete content of every file you change, and always index.html; files you do not return stay as they are.']
         : []),
@@ -344,7 +344,7 @@ export class AiDeveloperAgent extends Agent {
       '- The page must work when index.html is opened directly from disk: use classic <script src="..."> tags (no type="module"), no fetch of local files, no external URLs.',
       '- Every text a criterion requires must be present in the HTML itself, not only added by JavaScript.',
       '- Keep behaviour testable without a browser: put rules, state changes and calculations in plain functions in a .js file, and at its end export them for Node with: if (typeof module !== "undefined") module.exports = { ... }; QA may test them.',
-      '- Use exactly the CSS values stated in the checks (for example the same colour name).',
+      '- Use exactly the values the requirements state (for example the same colour name or text).',
       ...askingRules(canAsk, 'write the code'),
       'Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"}',
     ].join('\n');
@@ -417,7 +417,8 @@ export class AiQaAgent extends Agent {
   }
 
   async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [] }) {
-    const base = this.rules.planVerification({ spec, implementation });
+    // The PO writes its criteria in words: QA decides how to test each one.
+    const toTest = spec.acceptanceCriteria.filter((c) => !c.check);
     const system = [
       'You are the QA engineer of a small software team. The deterministic acceptance tests for the PO\'s criteria already exist and always run.',
       'Your job is to find what they miss: write additional automated tests from the USER\'S ORIGINAL REQUEST and the clarification dialogue, not only from the PO\'s criteria, and flag where the requirements may not match what the user asked.',
@@ -429,9 +430,18 @@ export class AiQaAgent extends Agent {
       '- tests behaviour where the files allow it: plain .js files that export functions for Node can be loaded with createRequire(import.meta.url)("../file.js"); otherwise check the HTML, CSS and scripts as text;',
       '- tests what the user asked for, concretely, without duplicating the existing acceptance tests and without testing things nobody asked for.',
       'A failing test means a defect the Developer must fix, so only assert what the request or the answers really require.',
+      ...(toTest.length
+        ? [
+            `The PO wrote the acceptance criteria ${toTest.map((c) => c.id).join(', ')} in words: you turn EACH of them into automated tests. For each one, either:`,
+            '- give it a deterministic check in "criteriaChecks" when one of these fits exactly:',
+            ...Object.values(WEB_CHECK_TYPES).map((t) => `    * ${t}`),
+            '- or write at least one test of your own named "QA-AI: AC<n> <what it checks>" (e.g. "QA-AI: AC3 the game ends when Abel touches a cat"); the criterion passes only if all its tests pass.',
+            'Test what the criterion says the user gets, through the behaviour the files allow you to run, rather than how the code happens to be written.',
+          ]
+        : []),
       'List in "requestOnly" the names of your tests that check something the user asked (in the request or the answers) that the agreed requirements do not state: if such a test fails, the requirements missed it too.',
       ...askingRules(canAsk, 'write your tests'),
-      'Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>","requestOnly":["QA-AI: ..."],"concerns":["a requirement that may not match the request, and why"]}',
+      `Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>",${toTest.length ? '"criteriaChecks":[{"criterion":"AC1","check":{...}}],' : ''}"requestOnly":["QA-AI: ..."],"concerns":["a requirement that may not match the request, and why"]}`,
     ].join('\n');
     const user = JSON.stringify(
       {
@@ -446,10 +456,20 @@ export class AiQaAgent extends Agent {
       null,
       2,
     );
-    const { value, aiCalls } = await askWithContract(this.getClient, { system, user, validate: (reply) => validateQaReply(reply, { canAsk }), purpose: 'write QA tests from the request' });
+    const { value, aiCalls } = await askWithContract(this.getClient, {
+      system,
+      user,
+      validate: (reply) => validateQaReply(reply, { canAsk, criteria: toTest.map(({ id, description }) => ({ id, description })) }),
+      purpose: 'write QA tests from the request',
+    });
     if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
+    // Deterministic tests for the criteria that have a check (QA's choice, or a rule of the workspace).
+    const checked = spec.acceptanceCriteria.filter((c) => c.check || value.criteriaChecks[c.id]).map((c) => ({ ...c, check: c.check ?? value.criteriaChecks[c.id] }));
+    const base = this.rules.planVerification({ spec: { ...spec, acceptanceCriteria: checked }, implementation });
     return {
       ...base,
+      criteriaChecks: value.criteriaChecks,
+      ownTestCriteria: toTest.filter((c) => !value.criteriaChecks[c.id]).map((c) => c.id),
       summary: `${base.summary} Plus ${value.tests} test${value.tests === 1 ? '' : 's'} of its own from your request${value.summary ? `: ${value.summary}` : '.'}`,
       extraFiles: [{ path: QA_AI_TEST_FILE, purpose: 'QA (AI) tests written from the original request and the clarification dialogue', content: value.testFile }],
       commands: [...base.commands, { id: 'ai-tests', kind: 'ai-tests', label: 'Run QA (AI) tests with read-only access', args: ['--test-reporter=tap', QA_AI_TEST_FILE] }],
@@ -459,15 +479,25 @@ export class AiQaAgent extends Agent {
     };
   }
 
-  /** The deterministic verdict, plus a defect for every failing QA (AI) test. */
+  /**
+   * The verdict: the deterministic checks, and QA's own tests. Criteria QA
+   * covered with its own tests pass only if all their tests pass.
+   */
   evaluate({ spec, results, plan = {} }) {
-    const base = this.rules.evaluate({ spec, results });
+    const checks = plan.criteriaChecks ?? {};
+    const ownIds = new Set(plan.ownTestCriteria ?? []);
+    const checked = spec.acceptanceCriteria.filter((c) => !ownIds.has(c.id)).map((c) => ({ ...c, check: c.check ?? checks[c.id] }));
+    const base = this.rules.evaluate({ spec: { ...spec, acceptanceCriteria: checked }, results });
     const requestOnly = new Set(plan.requestOnly ?? []);
     const run = results.commands.find((c) => c.kind === 'ai-tests');
     const tests = run?.tests ?? [];
     const failed = tests.filter((t) => t.status === 'fail');
     // A test file that crashed is QA's own problem, not a product defect.
     const problem = run && (run.timedOut || (!tests.length && run.exitCode !== 0)) ? (run.stderr || run.stdout).trim().slice(0, 1500) || `exit code ${run.exitCode}` : null;
+    if (problem && ownIds.size) {
+      // Criteria only QA's own tests can verify: the product is not to blame, QA must write its tests again.
+      throw new AgentBlockedError(`QA's own tests could not run, and criteria ${[...ownIds].join(', ')} can only be verified by them (${problem.split('\n')[0].slice(0, 200)}). Click Resume: QA writes its tests again.`);
+    }
     const aiDefects = failed.map((t) => ({
       title: `${t.name} failed`,
       expected: t.expected ?? null,
@@ -477,20 +507,39 @@ export class AiQaAgent extends Agent {
       // A test of something the requirements never stated: the requirements missed it as well.
       origin: requestOnly.has(t.name) ? 'requirements' : 'implementation',
     }));
+    const ownResults = new Map(
+      [...ownIds].map((id) => {
+        const mine = tests.filter((t) => new RegExp(`^QA-AI: ${id}\\b`).test(t.name));
+        const status = mine.length && mine.every((t) => t.status === 'pass') ? 'pass' : 'fail';
+        const evidence = mine.length ? `${mine.filter((t) => t.status === 'pass').length} of ${mine.length} of QA's own tests for ${id} passed` : `None of QA's own tests for ${id} ran`;
+        return [id, { status, evidence, ran: mine.length > 0 }];
+      }),
+    );
+    const missing = [...ownResults].filter(([, r]) => !r.ran).map(([id]) => {
+      const c = spec.acceptanceCriteria.find((x) => x.id === id);
+      return { criterionId: id, title: `${id} could not be verified: ${c.description}`, expected: `QA's tests for ${id} run`, actual: 'No test result', evidence: 'QA test run', reportedBy: 'QA' };
+    });
+    const criteria = spec.acceptanceCriteria.map((c) => {
+      const own = ownResults.get(c.id);
+      return own ? { id: c.id, description: c.description, status: own.status, evidence: own.evidence } : base.criteria.find((r) => r.id === c.id);
+    });
     const aiTests = { tests: tests.length, pass: tests.filter((t) => t.status === 'pass').length, fail: failed.length, problem };
-    const defects = [...base.defects, ...aiDefects];
-    const verdict = base.verdict === 'pass' && !aiDefects.length ? 'pass' : 'fail';
+    const defects = [...base.defects, ...aiDefects, ...missing];
+    const met = criteria.filter((c) => c.status === 'pass').length;
+    const verdict = base.verdict === 'pass' && !aiDefects.length && !missing.length && met === criteria.length ? 'pass' : 'fail';
     const ownText = run ? (problem ? 'its own tests could not run' : `${aiTests.pass} of ${aiTests.tests} of its own tests passed`) : 'no tests of its own';
     if (verdict === 'pass') {
-      return { ...base, verdict, defects, aiTests, summary: `${base.summary.replace(/\.$/, '')}; QA (AI): ${ownText}.`, handoffMessage: `${base.handoffMessage} QA (AI): ${ownText}.` };
+      const summary = `Verification passed: ${met} of ${criteria.length} acceptance criteria met; QA (AI): ${ownText}.`;
+      return { ...base, verdict, criteria, defects, aiTests, summary, handoffMessage: `${summary} The implementation is ready for your review.` };
     }
-    const first = defects[0];
+    const first = defects[0] ?? { title: 'Not every acceptance criterion was met' };
     return {
       ...base,
       verdict,
+      criteria,
       defects,
       aiTests,
-      summary: `Verification failed: ${defects.length} defect(s) (${base.defects.length} from the acceptance checks, ${aiDefects.length} from QA's own tests).`,
+      summary: `Verification failed: ${met} of ${criteria.length} acceptance criteria met; ${defects.length} defect(s) (${base.defects.length} from the deterministic checks, ${aiDefects.length} from QA's own tests).`,
       feedbackMessage: `Verification failed with ${defects.length} defect(s). ${first.title}. Please correct the implementation and hand it back for re-testing.`,
     };
   }

@@ -84,9 +84,9 @@ add noise to what is being observed.
 | Member | Kind | Responsibility |
 |---|---|---|
 | **You** | Human | Describe what to build, ask for changes, enable or disable agents, resume or cancel blocked work |
-| **PO** (Product Owner) | Scripted or AI-powered | Refines your request by asking questions, then writes requirements, assumptions and machine-checkable acceptance criteria; applies change requests to the requirements; reviews the verified result |
+| **PO** (Product Owner) | Scripted or AI-powered | Refines your request by asking questions, then writes requirements, assumptions and acceptance criteria in the user's words (never how to build or test them); applies change requests to the requirements; reviews the verified result |
 | **Developer** | Scripted or AI-powered | Writes the product files; changes them for change requests; fixes defects reported by QA |
-| **QA** (Quality Assurance) | Scripted or AI-powered | Generates one deterministic test per acceptance criterion, runs all tests, reports results and defects, and re-tests every correction. When AI-powered, it also writes tests of its own from your original request and flags requirements that may not match it |
+| **QA** (Quality Assurance) | Scripted or AI-powered | Turns every acceptance criterion into automated tests, runs them, reports results and defects, and re-tests every correction. When AI-powered, it decides how to test each criterion of the AI-powered PO, writes tests of its own from your original request, and flags requirements that may not match it |
 | Orchestrator | Infrastructure | Assigns each stage to the responsible agent if it is enabled, executes the work, records every step |
 
 ### Scripted or AI-powered
@@ -155,9 +155,10 @@ flowchart TD
 ```
 
 1. **Requirement analysis (PO).** The PO writes `REQUIREMENTS.md` with
-   requirements and acceptance criteria. Each criterion has a check that QA
-   can test automatically, such as "the page shows the text *hello world*"
-   or "the background colour is green". If anything is open, unclear or
+   requirements and acceptance criteria. They describe only what you see,
+   do and get, such as "the page shows the text *hello world*" or "the
+   background colour is green": never file names, code or technical
+   choices, which belong to the Developer, nor tests, which belong to QA. If anything is open, unclear or
    cannot be built, the PO asks you instead of guessing. The request then waits for
    your answer: you reply in the same request box ("For" shows **Answer the
    PO's question**), and the PO continues **the same request**, seeing all
@@ -199,8 +200,10 @@ models", and the `team rules` column of the requests CSV):
 
 - **v1**: the Developer and QA could not ask questions, and the AI-powered
   PO read the product files in its final review.
-- **v2** (current): the Developer and QA may ask the PO, who answers or
-  passes the question on to you; the PO never reads the code.
+- **v2**: the Developer and QA may ask the PO, who answers or passes the
+  question on to you; the PO never reads the code.
+- **v3** (current): as v2, and the PO writes its acceptance criteria in
+  words, never how to build or test them; QA decides how to test each one.
 
 Planned for the next release: an approval checkpoint, where the PO waits
 for you to approve the requirements before the Developer starts.
@@ -210,9 +213,9 @@ for you to approve the requirements before the Developer starts.
 | Decision | Scripted mode | AI-powered mode | Safeguard |
 |---|---|---|---|
 | Is the request clear and buildable? | PO matches it against fixed recipes | PO (Claude), in rounds of questions | Before you answer anything, a PO that decides a detail you never gave is refused and must ask |
-| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude) | Every criterion must use a check type QA can test automatically; every assumption says who decided it |
+| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude), in the user's words | Every assumption says who decided it; any test the PO adds is ignored |
 | The product files | Developer fills a template | Developer (Claude) | Files are checked before writing: inside the product folder, allowed types, not in `test/`, nothing loaded from the internet |
-| Do the checks pass? | QA runs the deterministic tests | QA runs the same deterministic tests **plus** tests it writes from your request | Real `node --test` runs; the deterministic checks always run; QA's own tests run read-only and can only add defects |
+| How is each criterion tested, and does it pass? | QA runs the recipe's deterministic tests | QA (Claude) turns each criterion into a deterministic check or into tests of its own, **plus** tests from your request | Real `node --test` runs; every criterion must be covered; QA's own tests run read-only. An AI-powered PO needs an AI-powered QA: a scripted QA blocks with that explanation |
 | Accept or reject | PO by rule: accept only if QA verified everything | PO (Claude), with its reasons | Claude may reject a verified product, but an "accept" without QA verification is refused |
 
 Every AI answer must match the agent's **contract** (a fixed JSON shape

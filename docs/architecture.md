@@ -41,7 +41,7 @@ Browser (public/)                         Node.js server (src/)
 
 | Agent | Method | Input | Output |
 |---|---|---|---|
-| PO | `analyse` | request text, recipe catalogue | `ready` + spec (requirements, acceptance criteria with machine-checkable checks, handoff message), or `needs_clarification` + message + supported types |
+| PO | `analyse` | request text, recipe catalogue | `ready` + spec (requirements, acceptance criteria — with a check for recipe criteria, in words for the AI PO — handoff message), or `needs_clarification` + message + supported types |
 | PO | `review` | spec, QA verification record (never the code) | accepted / not accepted, summary, reasons, unmet criteria. Scripted PO: the evidence rule. AI PO: a model decision validated by `validateReviewReply`, which refuses "accept" unless QA verified every criterion |
 | Developer | `implement` | spec, attempt number, QA defects | files to write, summary, handoff message |
 | QA | `planVerification` | spec, implemented files | acceptance test file, required files, commands |
@@ -232,8 +232,11 @@ The first AI integration used GitHub Models. That service was retired on
   "ready" answer must list `assumptions: [{ text, decidedBy: 'user' | 'po' }]`;
   on the first round (no answers yet) any `decidedBy: 'po'` is refused, and
   `whyNoQuestions` is required, so the retry has to ask instead.
-- **AI-powered QA** (`AiQaAgent`): runs the scripted QA's plan and evaluation
-  unchanged, then adds `qa/ai-checks.mjs` (from `validateQaReply`: allowed
+- **AI-powered QA** (`AiQaAgent`): turns every criterion the PO wrote in
+  words into a test: a deterministic check of its choice (`criteriaChecks`)
+  or its own tests named `QA-AI: AC<n> ...` (the criterion passes only if
+  they all pass). It runs the scripted QA's plan and evaluation for the
+  criteria with a check, then adds `qa/ai-checks.mjs` (from `validateQaReply`: allowed
   modules only, no network, must parse with `node --check`, tests named
   `QA-AI: ...`). The orchestrator runs it as
   `node --permission --allow-fs-read=<product> --test-reporter=tap qa/ai-checks.mjs`
@@ -241,14 +244,18 @@ The first AI integration used GitHub Models. That service was retired on
   failures into defects (`reportedBy: 'QA (AI test)'`) and records
   `qa.concern` events, which the AI PO receives in its review. A crashing
   test file is recorded as `qa.ai-tests-failed` and never counts against the
-  product. `qa/` and `test/` are reserved for QA in the Developer's
+  product; if a criterion depends on it, the workflow blocks so QA can write
+  its tests again on Resume. A scripted QA blocks on criteria without a
+  check. `qa/` and `test/` are reserved for QA in the Developer's
   contract.
 - `src/agents/ai/aiAgents.js`: the AI PO and AI Developer implement the same
   contracts as the scripted agents. `src/ai/contracts.js` validates every
   reply:
-  - The PO may only use deterministic check types (`fileExists`,
+  - The PO writes criteria in words (any check it adds is dropped);
+    `index.html` is always required, as a criterion of the workspace with
+    its own check. QA may use the deterministic check types (`fileExists`,
     `fileContains`, `textVisible`, `htmlTitle`, `cssProperty`,
-    `centeredLayout`). `index.html` is always required.
+    `centeredLayout`), and must cover every criterion.
   - The Developer may only write relative, non-hidden files with allowed
     extensions, outside `test/`, without external URLs, and must include
     `index.html`.

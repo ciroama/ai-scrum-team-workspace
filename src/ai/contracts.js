@@ -46,7 +46,7 @@ function safeRelativePath(path) {
   );
 }
 
-function validateCheck(check, problems, where) {
+export function validateCheck(check, problems, where) {
   if (!check || typeof check !== 'object') return problems.push(`${where}: "check" must be an object.`);
   switch (check.type) {
     case 'fileExists':
@@ -125,9 +125,10 @@ export function validatePoReply(reply, { firstRound = false, bug = false } = {})
   if (!Array.isArray(criteria) || !criteria.length || criteria.length > MAX_CRITERIA) {
     problems.push(`"acceptanceCriteria" must contain 1–${MAX_CRITERIA} items${Array.isArray(criteria) ? ` (it has ${criteria.length})` : ''}.`);
   } else {
+    // The PO says what must be true for the user, in words. Turning a
+    // criterion into a test is QA's job, so any test the PO adds is ignored.
     criteria.forEach((c, i) => {
       if (!isText(c?.description, MAX_TEXT)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
-      validateCheck(c?.check, problems, `acceptanceCriteria[${i}]`);
     });
   }
   if (bug && reply.bugOrigin !== 'requirements' && reply.bugOrigin !== 'implementation') {
@@ -152,15 +153,12 @@ export function validatePoReply(reply, { firstRound = false, bug = false } = {})
   }
   if (problems.length) throw new ContractError(problems);
 
-  const acceptanceCriteria = criteria.map((c, i) => ({ id: `AC${i + 1}`, description: c.description.trim(), check: normaliseCheck(c.check) }));
-  // The entry page is always required; add it if the PO did not state it.
-  if (!acceptanceCriteria.some((c) => c.check.type === 'fileExists' && c.check.path === 'index.html')) {
-    acceptanceCriteria.push({
-      id: `AC${acceptanceCriteria.length + 1}`,
-      description: 'The product has an index.html entry page (added by the workspace: the preview and QA need it).',
-      check: { type: 'fileExists', path: 'index.html' },
-    });
-  }
+  const acceptanceCriteria = criteria
+    .filter((c) => !c.description.trim().startsWith(ENTRY_PAGE_CRITERION))
+    .map((c, i) => ({ id: `AC${i + 1}`, description: c.description.trim() }));
+  // The entry page is always required (the preview and QA open it): a
+  // technical rule of the workspace, so it comes with its own check.
+  acceptanceCriteria.push({ id: `AC${acceptanceCriteria.length + 1}`, description: `${ENTRY_PAGE_CRITERION} (added by the workspace: the preview and QA need it).`, check: { type: 'fileExists', path: 'index.html' } });
   return {
     status: 'ready',
     title: reply.title.trim(),
@@ -175,7 +173,9 @@ export function validatePoReply(reply, { firstRound = false, bug = false } = {})
   };
 }
 
-function normaliseCheck(check) {
+const ENTRY_PAGE_CRITERION = 'The product has an index.html entry page';
+
+export function normaliseCheck(check) {
   const { type } = check;
   switch (type) {
     case 'fileExists':
@@ -340,7 +340,7 @@ function syntaxError(source) {
  * modules and makes sure they parse.
  * @returns {{ testFile: string, tests: number, concerns: string[], summary: string | null }}
  */
-export function validateQaReply(reply, { canAsk = false } = {}) {
+export function validateQaReply(reply, { canAsk = false, criteria = [] } = {}) {
   const asked = teamQuestions(reply, canAsk, 'write your tests now');
   if (asked) return asked;
   const problems = [];
@@ -360,6 +360,28 @@ export function validateQaReply(reply, { canAsk = false } = {}) {
       if (error) problems.push(`The test file does not parse: ${error}`);
     }
   }
+  // The PO's criteria are in words: QA turns each one into a test, either a
+  // deterministic check or tests of its own named after the criterion.
+  const criteriaChecks = {};
+  if (reply.criteriaChecks != null && !Array.isArray(reply.criteriaChecks)) problems.push('"criteriaChecks" must be a list of {"criterion":"AC1","check":{...}}.');
+  for (const [i, item] of (Array.isArray(reply.criteriaChecks) ? reply.criteriaChecks : []).entries()) {
+    const id = String(item?.criterion ?? '');
+    if (!criteria.some((c) => c.id === id)) {
+      problems.push(`criteriaChecks[${i}]: "criterion" must be one of ${criteria.map((c) => c.id).join(', ') || '(none: every criterion already has its test)'}.`);
+      continue;
+    }
+    const before = problems.length;
+    validateCheck(item.check, problems, `criteriaChecks[${i}] (${id})`);
+    if (problems.length === before) criteriaChecks[id] = normaliseCheck(item.check);
+  }
+  if (typeof source === 'string') {
+    for (const c of criteria) {
+      const ownTests = new RegExp(`\\btest\\s*\\(\\s*(['"\`])QA-AI: ${c.id}\\b`).test(source);
+      if (!criteriaChecks[c.id] && !ownTests) {
+        problems.push(`${c.id} ("${c.description}") has no test: give it a check in "criteriaChecks", or write at least one test named "QA-AI: ${c.id} ...".`);
+      }
+    }
+  }
   if (reply.concerns != null && (!Array.isArray(reply.concerns) || !reply.concerns.every((c) => isText(c, 600)))) problems.push('"concerns" must be a list of short texts.');
   if (reply.requestOnly != null && (!Array.isArray(reply.requestOnly) || !reply.requestOnly.every((n) => typeof n === 'string' && n.startsWith('QA-AI: ')))) {
     problems.push('"requestOnly" must list the names ("QA-AI: ...") of the tests that check something the user asked but the requirements do not state.');
@@ -367,6 +389,7 @@ export function validateQaReply(reply, { canAsk = false } = {}) {
   if (problems.length) throw new ContractError(problems);
   return {
     requestOnly: (reply.requestOnly ?? []).map((n) => n.trim()),
+    criteriaChecks,
     testFile: source,
     tests: (source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? []).length,
     concerns: (reply.concerns ?? []).map((c) => c.trim()).slice(0, 10),

@@ -21,8 +21,10 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  * 1: the Developer and QA could not ask questions; the PO read the code in its review.
  * 2: the Developer and QA may ask the PO (who answers or passes the question
  *    on to the user); the PO never reads the code.
+ * 3: as 2, and the PO writes its acceptance criteria in words: QA decides
+ *    how to test each one.
  */
-export const TEAM_RULES_VERSION = 2;
+export const TEAM_RULES_VERSION = 3;
 const OUTPUT_LIMIT = 20_000;
 const MAX_FILE_PREVIEW = 200_000;
 

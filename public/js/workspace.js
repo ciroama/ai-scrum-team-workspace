@@ -558,7 +558,7 @@ export function renderComposer(state, ui, actions) {
         ? bug
           ? `Bug report: the PO analyses it against requirements v${target.versions} and says whether it comes from the requirements or the code; then the team fixes it and QA re-checks every criterion.`
           : `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
-        : 'Bug reports and change requests need the PO and the Developer in AI-powered mode (Team page).',
+        : 'Bug reports and change requests need the PO, the Developer and QA in AI-powered mode (Team page).',
     );
     return finishComposer(state, ui, active);
   }

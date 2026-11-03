@@ -339,7 +339,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const askedMetric = (key, who, from) => {
     const rounds = teamAsked(from);
     const n = sum(rounds.map((e) => e.detail?.questions?.length ?? 0));
-    return metric(key, 'Questions it asked the PO', n, rounds.length ? `${rounds.length} time${rounds.length === 1 ? '' : 's'} it stopped · ${teamAnswered(from)} answered by the PO · ${teamPassedOn(from)} passed on to you` : null, SOURCE.recorded, `Recorded team.question events: the ${who} stopped before doing its work to ask the PO (team rules v2).`);
+    return metric(key, 'Questions it asked the PO', n, rounds.length ? `${rounds.length} time${rounds.length === 1 ? '' : 's'} it stopped · ${teamAnswered(from)} answered by the PO · ${teamPassedOn(from)} passed on to you` : null, SOURCE.recorded, `Recorded team.question events: the ${who} stopped before doing its work to ask the PO (team rules v2 and later).`);
   };
   const poDecided = assumptions.filter((a) => a.decidedBy === 'po').length;
   const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
