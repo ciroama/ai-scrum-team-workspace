@@ -235,6 +235,11 @@ const actions = {
     await workflowAction(workflowId, 'resume');
   },
 
+  async stop(workflowId) {
+    if (!window.confirm('Stop the agent now? Its current step is not kept; Resume runs it again, or you can cancel the workflow.')) return;
+    await workflowAction(workflowId, 'stop');
+  },
+
   async cancel(workflowId) {
     if (!window.confirm('Cancel this workflow? Its recorded history and generated files are kept, but it will not continue.')) return;
     await workflowAction(workflowId, 'cancel');

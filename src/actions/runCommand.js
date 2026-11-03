@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { track } from './children.js';
 
 /**
  * Environment for child processes. NODE_TEST_CONTEXT is removed so a
@@ -27,7 +28,7 @@ export function childEnv(overrides = {}) {
 export function runCommand({ command, args, cwd, timeoutMs = 60_000, env = childEnv(), onLine = () => {} }) {
   return new Promise((resolve, reject) => {
     const started = process.hrtime.bigint();
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = track(spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }));
     const output = { stdout: '', stderr: '' };
     const pending = { stdout: '', stderr: '' };
     let timedOut = false;

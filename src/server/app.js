@@ -291,6 +291,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
         return { workflow: orchestrator.answer(id, answer).workflow };
       },
     ],
+    ['POST', /^\/api\/workflows\/([\w-]+)\/stop$/, (_req, [id]) => ({ workflow: orchestrator.stop(id).workflow })],
     ['POST', /^\/api\/workflows\/([\w-]+)\/cancel$/, (_req, [id]) => ({ workflow: orchestrator.cancel(id) })],
     [
       'PUT',

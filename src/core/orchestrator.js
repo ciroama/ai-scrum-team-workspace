@@ -6,6 +6,7 @@ import { resolveInside, writeFile } from '../actions/writeFile.js';
 import { runCommand } from '../actions/runCommand.js';
 import { parseTap } from '../actions/tapParser.js';
 import { commitAll, detectGit } from '../actions/git.js';
+import { stopAll } from '../actions/children.js';
 import { RECIPES } from '../recipes/index.js';
 import { MAX_IMPLEMENTATION_ATTEMPTS, STAGES } from './stages.js';
 
@@ -83,6 +84,8 @@ export class Orchestrator {
     this.commandTimeoutMs = commandTimeoutMs;
     /** @type {{ workflowId: string, promise: Promise<object> } | null} */
     this.current = null;
+    /** The workflow the user asked to stop, while its current step winds down. */
+    this.stopping = null;
     this.gitStatus = null;
     this.gitNoticeSent = new Set();
   }
@@ -269,6 +272,38 @@ export class Orchestrator {
       state: { ...state, dialogue, clarification: null, waitingFor: null },
     });
     return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
+  }
+
+  /**
+   * Stops the running workflow now: the agent's Claude Code request or test
+   * run is ended, and the workflow becomes Interrupted. Resume runs the
+   * stopped stage again; Cancel ends it. Earlier work is kept.
+   * @returns {{ workflow: object, done: Promise<object> }}
+   */
+  stop(workflowId) {
+    const workflow = this.repository.getWorkflow(workflowId);
+    if (!workflow) throw new NotFoundError('Workflow not found');
+    if (workflow.status !== 'running' || this.current?.workflowId !== workflowId) {
+      throw new ConflictError('Only a running workflow can be stopped.');
+    }
+    this.stopping = workflowId;
+    stopAll();
+    return { workflow, done: this.current.promise };
+  }
+
+  /** The stage that was running when the user stopped the workflow. */
+  #stopped(workflow, stage, agent) {
+    this.stopping = null;
+    this.repository.updateWorkflow(workflow.id, { status: 'interrupted', verified: false });
+    this.#event(workflow.id, {
+      type: 'workflow.stopped',
+      category: 'workflow',
+      actor: 'user',
+      actorKind: 'human',
+      status: 'warning',
+      summary: `You stopped the workflow during ${stage.title} (${agent.label} was working). Resume runs this stage again; earlier work is kept. Or cancel the workflow.`,
+      detail: { stage: stage.id, agentId: agent.id },
+    });
   }
 
   /** One workflow at a time: refuses to continue a request while another runs. */
@@ -483,8 +518,9 @@ export class Orchestrator {
         if (workflow.status !== 'running') return workflow;
         const stage = STAGES[workflow.stage];
         const agent = this.team.get(stage.agent);
+        if (this.stopping === workflowId) this.#stopped(workflow, stage, agent);
         // Availability is checked before every assignment.
-        if (!this.repository.isAgentEnabled(agent.id)) this.#block(workflow, stage, agent);
+        else if (!this.repository.isAgentEnabled(agent.id)) this.#block(workflow, stage, agent);
         else await this.#runStage(workflow, stage, agent);
       }
     } catch (error) {
@@ -579,9 +615,20 @@ export class Orchestrator {
         consultation: () => this.#consultation(ctx),
       }[stage.id];
       const { output, update } = await handler();
+      if (this.stopping === workflow.id) {
+        // Stopped while the step was finishing: its result is not used.
+        this.repository.finishTask(task.id, { status: 'interrupted', error: 'Stopped by you' });
+        this.#stopped(workflow, stage, agent);
+        return;
+      }
       this.repository.finishTask(task.id, { status: 'completed', output });
       this.repository.updateWorkflow(workflow.id, update);
     } catch (error) {
+      if (this.stopping === workflow.id) {
+        this.repository.finishTask(task.id, { status: 'interrupted', error: 'Stopped by you' });
+        this.#stopped(workflow, stage, agent);
+        return;
+      }
       this.repository.finishTask(task.id, { status: 'failed', error: error.message });
       this.#recordAiCalls(ctx, error.aiCalls);
       if (error.blocking) {

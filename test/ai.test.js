@@ -940,3 +940,26 @@ test("when QA's own tests crash and a criterion depends on them, the request blo
   assert.match(workflow.blockedReason, /QA's own tests could not run, and criteria AC4 can only be verified by them.*Click Resume/);
   assert.ok(!events.some((e) => e.type === 'defect.reported'), 'no defect is blamed on the product');
 });
+
+test('Stop ends the running Claude Code request now; the workflow can then be resumed, cancelled and deleted', async (t) => {
+  const { app, claude } = await aiApp(t, [{ sleepMs: 60_000 }]);
+  const { workflow, done } = app.orchestrator.submit(REQUEST);
+  // Wait until the PO's request to Claude Code is really running.
+  for (let i = 0; i < 100 && !(await claude.received()).length; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await claude.received()).length, 1);
+
+  const started = Date.now();
+  const res = await fetch(`${app.url}/api/workflows/${workflow.id}/stop`, { method: 'POST' });
+  assert.equal(res.status, 200);
+  const stopped = await done;
+  assert.ok(Date.now() - started < 10_000, 'the 60 s request did not run to the end');
+  assert.equal(stopped.status, 'interrupted');
+  const events = app.repository.listEvents(workflow.id);
+  assert.match(events.find((e) => e.type === 'workflow.stopped').summary, /You stopped the workflow during Requirement analysis \(PO was working\)/);
+  assert.ok(!events.some((e) => e.type === 'workflow.blocked'), 'stopping is not an error');
+  assert.equal(app.repository.listTasks(workflow.id).at(-1).status, 'interrupted');
+  assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/stop`, { method: 'POST' })).status, 409, 'nothing left to stop');
+
+  assert.equal((await fetch(`${app.url}/api/workflows/${workflow.id}/cancel`, { method: 'POST' })).status, 200);
+  assert.equal((await fetch(`${app.url}/api/products/${workflow.id}`, { method: 'DELETE' })).status, 200);
+});

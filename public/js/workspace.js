@@ -448,6 +448,7 @@ function conversationItems(state, detail, ui, actions) {
       case 'workflow.failed':
       case 'workflow.needs_clarification':
       case 'workflow.interrupted':
+      case 'workflow.stopped':
       case 'agent.enabled':
       case 'agent.disabled':
       case 'agent.mode':
@@ -464,7 +465,17 @@ function conversationItems(state, detail, ui, actions) {
   if (workflow.status === 'interrupted') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
   const running = tasks.find((t) => t.status === 'running');
   if (running) {
-    items.push(h('li', { className: 'live-line' }, h('span', { className: 'dot' }), `${agentLabel(state, running.agentId)} is working: ${running.title.toLowerCase()}…`));
+    items.push(
+      h(
+        'li',
+        { className: 'live-line' },
+        h('span', { className: 'dot' }),
+        `${agentLabel(state, running.agentId)} is working: ${running.title.toLowerCase()}…`,
+        workflow.status === 'running'
+          ? h('button', { type: 'button', className: 'btn btn-sm btn-danger live-stop', disabled: ui.pendingAction === workflow.id, title: 'Stop the agent now. You can resume this stage later, or cancel the workflow.', onclick: () => actions.stop(workflow.id) }, 'Stop')
+          : null,
+      ),
+    );
   }
   return items;
 }

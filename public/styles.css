@@ -2901,3 +2901,8 @@ p.kpi-empty {
   color: var(--text);
 }
 
+
+/* Stop button on the "agent is working" line */
+.live-line .live-stop {
+  margin-left: auto;
+}

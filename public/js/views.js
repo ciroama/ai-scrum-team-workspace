@@ -286,7 +286,7 @@ export function progressBanner(state, workflow, ui, actions) {
           ? canResume
             ? `${agent.label} is enabled again. Click Resume to continue from ${stage.title}; earlier work is kept.`
             : `Enable ${agent.label} in the team panel, then click Resume to continue from ${stage.title}. Earlier work is kept.`
-          : `The application stopped during this stage. Resume runs ${stage.title} again; earlier stages are kept.`,
+          : `The work stopped during this stage (you stopped it, or the application was closed). Resume runs ${stage.title} again; earlier stages are kept.`,
       ),
       h(
         'div',
