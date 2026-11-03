@@ -336,6 +336,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const teamAsked = (from) => events.filter((e) => e.type === 'team.question' && e.actor === from);
   const teamAnswered = (to) => sum(events.filter((e) => e.type === 'team.answer' && e.to === to).map((e) => e.detail?.answers?.length ?? 0));
   const teamPassedOn = (from) => sum(events.filter((e) => e.type === 'po.escalation' && e.detail?.for === from).map((e) => e.detail?.questions?.length ?? 0));
+  const disputeAnswers = events.filter((e) => e.type === 'qa.dispute');
   const askedMetric = (key, who, from) => {
     const rounds = teamAsked(from);
     const n = sum(rounds.map((e) => e.detail?.questions?.length ?? 0));
@@ -382,6 +383,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('devBugsCode', 'Your bugs traced to its code', bugsFromCode, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the implementation: the requirements were right, the code was wrong.'),
       metric('devCodeDefects', 'Code defects found', fromCode, 'by QA or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the implementation: failed acceptance checks, failing QA tests of things the requirements state, and PO rejection reasons marked "implementation".'),
       askedMetric('devQuestions', 'Developer', 'dev'),
+      metric('devDisputes', 'QA tests it contested', events.filter((e) => e.type === 'dev.dispute').length, disputeAnswers.length ? `${disputeAnswers.filter((e) => e.detail?.decision === 'fixed').length} fixed by QA · ${disputeAnswers.filter((e) => e.detail?.decision === 'kept').length} kept` : null, SOURCE.recorded, 'Recorded dev.dispute events: the Developer argued that one of QA\'s failing tests was wrong (team rules v6 and later); QA\'s answers are qa.dispute events.'),
       metric('devRefused', 'AI answers refused by its rules', refused('dev'), null, SOURCE.recorded, refusedBasis('Developer')),
       metric('devFirstTimeRight', 'Right first time', verifiedWorkflows.length ? firstTimeRight.length / verifiedWorkflows.length : null, verifiedWorkflows.length ? `${firstTimeRight.length} of ${verifiedWorkflows.length} requests` : null, SOURCE.calculated, 'Requests whose first delivery passed QA and was not sent back by the PO, out of the requests QA verified at least once.', 'percent'),
     ],
@@ -392,6 +394,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('qaEscaped', 'Bugs that got past it', escapedBugs.length, 'you found them after QA had verified the delivery', SOURCE.recorded, 'Bug reports about a product version QA had verified: problems none of the automated checks caught.'),
       metric('qaMissed', 'Passed by QA, rejected by the PO', poRework.length, null, SOURCE.recorded, 'Deliveries QA verified that the PO then rejected: problems the tests did not catch, according to the PO.'),
       askedMetric('qaQuestions', 'QA', 'qa'),
+      metric('qaTestsFixed', 'Own tests it fixed after an objection', disputeAnswers.filter((e) => e.detail?.decision === 'fixed').length, disputeAnswers.length ? `of ${disputeAnswers.length} contested` : null, SOURCE.recorded, 'Recorded qa.dispute events with decision "fixed": the Developer contested the test and QA agreed it was wrong.'),
       metric('qaRefused', 'AI answers refused by its rules', refused('qa'), null, SOURCE.recorded, refusedBasis('QA')),
     ],
   };

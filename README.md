@@ -239,11 +239,15 @@ models", and the `team rules` column of the requests CSV):
   before accepting the Developer's files). QA tests the behaviour through it,
   by simulating the product step by step: tests run in Node, with no screen,
   canvas or keyboard.
-- **v5** (current): as v4, and the PO's final review sees your answers, not
+- **v5**: as v4, and the PO's final review sees your answers, not
   only your first message. When the review finds the PO's own requirements
   wrong, the PO corrects them (a new version) before the Developer changes
   the product, at most twice per request; the Developer never changes the
   requirements, and `REQUIREMENTS.md` is not its to write.
+- **v6** (current): as v5, and the Developer may contest a QA test it
+  believes is wrong (with its reason). At the next verification QA must fix
+  the test or explain why it is right, and the PO's review sees the
+  discussion. Statistics count contested and fixed tests.
 
 Planned for the next release: an approval checkpoint, where the PO waits
 for you to approve the requirements before the Developer starts.

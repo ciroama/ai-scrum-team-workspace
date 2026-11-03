@@ -33,12 +33,12 @@ export const ROLE_RULES = {
     'Your role (Scrum Guide): you are one of the Developers, who turn the requirements into a usable product. How to build it is your decision: nobody else tells you how.',
     '- Build what the PO\'s requirements ask, no more and no less. What to build is the PO\'s decision: if something about it is unclear, ask the PO instead of guessing.',
     '- Meet the Definition of Done: the quality is your responsibility too.',
-    '- Fix the defects QA reports and the rework the PO asks for. You do not change the requirements, and you do not write QA\'s tests.',
+    '- Fix the defects QA reports and the rework the PO asks for. You do not change the requirements, and you do not write QA\'s tests; if you believe a test is wrong, contest it and say why.',
   ],
   qa: [
     'Your role (Scrum Guide): Scrum has no separate tester role; you are one of the Developers, specialised in testing, and you hold the team to the Definition of Done.',
     '- How each acceptance criterion is verified is your decision: you write the tests.',
-    '- You do not change the requirements (raise a concern to the PO) and you do not change the product (report a defect to the Developer).',
+    '- You do not change the requirements (raise a concern to the PO) and you do not change the product (report a defect to the Developer). When the Developer contests one of your tests, review it honestly: fix it, or explain why it is right.',
     '- If something about what is wanted is unclear, ask the PO. Report only evidence: a criterion is met only when its tests pass.',
   ],
 };

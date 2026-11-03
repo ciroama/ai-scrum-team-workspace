@@ -254,7 +254,7 @@ export class AiProductOwnerAgent extends Agent {
    * whether the code is right is for QA to show. Guard: it may reject a
    * product whose tests pass, but cannot accept one QA did not verify.
    */
-  async review({ spec, verification, previousRejections = [], teamClarifications = [], dialogue = [] }) {
+  async review({ spec, verification, previousRejections = [], teamClarifications = [], dialogue = [], testDisputes = [] }) {
     const evidence = this.rules.review({ spec, verification });
     const qaPassed = Boolean(verification?.executed && verification.verdict === 'pass' && evidence.unmet.length === 0);
     const system = [
@@ -262,6 +262,7 @@ export class AiProductOwnerAgent extends Agent {
       ...roleInstructions('po'),
       'You receive the user\'s request, the user\'s answers to your questions, the agreed requirements and acceptance criteria, and the result of QA\'s verification. You do not see the code: as a PO you judge the product by the request, the answers, the requirements and QA\'s evidence, never by reading the implementation.',
       '- The user\'s answers complete the request and can change it (e.g. a different value than the request first said): what the user asked is the request together with every answer.',
+      '- If the Developer contested a test, weigh the Developer\'s reason and QA\'s answer: a test QA kept after a fair objection is still evidence, but you may judge it.',
       'Decide whether to accept the product:',
       '- Accept only if it does what the user asked and every acceptance criterion was verified by QA.',
       '- Reject if QA did not verify every criterion, or if QA\'s evidence shows the product does not really do what the user asked (even when the tests pass). Explain why, with concrete reasons: a reason in the code goes back to the Developer for rework; a reason in the requirements comes back to you, to correct your requirements first.',
@@ -291,6 +292,7 @@ export class AiProductOwnerAgent extends Agent {
             }
           : { executed: false },
         ...clarificationsFor(teamClarifications),
+        ...(testDisputes.length ? { testsTheDeveloperContested: testDisputes.map(({ test, reason, decision, answer }) => ({ test, developersReason: reason, qaDecision: decision, qaReason: answer })) } : {}),
         ...(previousRejections.length ? { yourPreviousRejections: previousRejections } : {}),
       },
       null,
@@ -395,6 +397,8 @@ export class AiDeveloperAgent extends Agent {
 
   async implement({ spec, attempt, defects = [], currentFiles = [], change = null, canAsk = false, teamClarifications = [] }) {
     const correcting = defects.length > 0;
+    // QA's own tests that failed: the Developer may contest them.
+    const contestable = defects.filter((d) => d.reportedBy === 'QA (AI test)').map((d) => d.title.replace(/ failed$/, ''));
     const system = [
       'You are the Developer of a small software team.',
       ...roleInstructions('dev'),
@@ -412,7 +416,12 @@ export class AiDeveloperAgent extends Agent {
       `- Load ${LOGIC_FILE} in index.html before the other scripts; the other scripts only draw and handle input, calling its functions. QA tests the behaviour through ${LOGIC_FILE} without a browser, and the workspace checks that it loads on its own before accepting your files.`,
       '- Use exactly the values the requirements state (for example the same colour name or text).',
       ...askingRules(canAsk, 'write the code'),
-      'Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"}',
+      ...(contestable.length
+        ? [
+            `If you believe one of QA's failing tests is wrong (it does not check what its criterion says, e.g. it relies on an unrealistic simulation), you may contest it in "disputes": [{"test":"<exact test name>","reason":"why the test is wrong"}]. QA must then fix the test or explain why it is right, and the PO sees the discussion. Contestable tests: ${contestable.join(' | ')}. Still return the files, fixing what is really wrong.`,
+          ]
+        : []),
+      `Answer with a JSON object only: {"files":[{"path":"index.html","purpose":"...","content":"..."}],"summary":"what you built","handoffMessage":"message to QA"${contestable.length ? ',"disputes":[]' : ''}}`,
     ].join('\n');
     const user = JSON.stringify(
       {
@@ -442,7 +451,7 @@ export class AiDeveloperAgent extends Agent {
           ? `Change the existing product to meet the updated requirements:\n${user}`
           : `Implement this:\n${user}`,
       validate: async (reply) => {
-        const value = validateDevReply(reply, { canAsk });
+        const value = validateDevReply(reply, { canAsk, contestable });
         if (value.status === 'questions') return value;
         // The product as it will be on disk: the current files, with this delivery on top.
         const product = new Map(currentFiles.map((f) => [f.path, f.content]));
@@ -459,6 +468,7 @@ export class AiDeveloperAgent extends Agent {
     if (value.status === 'questions') return { status: 'questions', questions: value.questions, aiCalls };
     return {
       status: 'delivered',
+      disputes: value.disputes ?? [],
       files: value.files,
       summary:
         value.summary ??
@@ -494,7 +504,7 @@ export class AiQaAgent extends Agent {
     this.rules = scripted;
   }
 
-  async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [], dir = null }) {
+  async planVerification({ spec, implementation, dialogue = [], files = [], canAsk = false, teamClarifications = [], dir = null, disputes = [] }) {
     // The PO writes its criteria in words: QA decides how to test each one.
     const toTest = spec.acceptanceCriteria.filter((c) => !c.check);
     const system = [
@@ -523,6 +533,11 @@ export class AiQaAgent extends Agent {
         : []),
       'List in "requestOnly" the names of your tests that check something the user asked (in the request or the answers) that the agreed requirements do not state: if such a test fails, the requirements missed it too.',
       ...askingRules(canAsk, 'write your tests'),
+      ...(disputes.length
+        ? [
+            'The Developer CONTESTED some of your tests from the last verification ("contestedTests"). Look at each one honestly: if the test does not check what its criterion says (for example an unrealistic simulation or an arbitrary threshold), fix it; if it is right, keep it and explain why. Answer each in "disputeResponses": [{"test":"<name>","decision":"fixed" | "kept","reason":"..."}].',
+          ]
+        : []),
       `Answer with a JSON object only: {"summary":"what your tests cover","testFile":"<the whole module source>",${toTest.length ? '"criteriaChecks":[{"criterion":"AC1","check":{...}}],' : ''}"requestOnly":["QA-AI: ..."],"concerns":["a requirement that may not match the request, and why"]}`,
     ].join('\n');
     const user = JSON.stringify(
@@ -533,6 +548,7 @@ export class AiQaAgent extends Agent {
         acceptanceCriteria: spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
         assumptions: spec.assumptions ?? [],
         ...clarificationsFor(teamClarifications),
+        ...(disputes.length ? { contestedTests: disputes.map(({ test, reason }) => ({ test, developersReason: reason })) } : {}),
         files: files.map((f) => ({ path: f.path, content: f.content })),
       },
       null,
@@ -542,7 +558,7 @@ export class AiQaAgent extends Agent {
       system,
       user,
       validate: async (reply) => {
-        const value = validateQaReply(reply, { canAsk, criteria: toTest.map(({ id, description }) => ({ id, description })) });
+        const value = validateQaReply(reply, { canAsk, criteria: toTest.map(({ id, description }) => ({ id, description })), disputes });
         if (value.status === 'questions' || !dir) return value;
         const crash = await dryRun(dir, value.testFile);
         if (crash) throw new ContractError([`Your test file crashed before its tests could run: ${crash}. Read files inside each test with paths relative to the product folder, only files that exist, and keep the module free of top-level code that can fail.`]);
@@ -557,6 +573,7 @@ export class AiQaAgent extends Agent {
     return {
       ...base,
       criteriaChecks: value.criteriaChecks,
+      disputeResponses: value.disputeResponses ?? [],
       ownTestCriteria: toTest.filter((c) => !value.criteriaChecks[c.id]).map((c) => c.id),
       summary: `${base.summary} Plus ${value.tests} test${value.tests === 1 ? '' : 's'} of its own from your request${value.summary ? `: ${value.summary}` : '.'}`,
       extraFiles: [{ path: QA_AI_TEST_FILE, purpose: 'QA (AI) tests written from the original request and the clarification dialogue', content: value.testFile }],

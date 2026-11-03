@@ -283,7 +283,7 @@ export function validateTeamAnswerReply(reply, { count }) {
   return { answers: clean };
 }
 
-export function validateDevReply(reply, { canAsk = false } = {}) {
+export function validateDevReply(reply, { canAsk = false, contestable = [] } = {}) {
   const asked = teamQuestions(reply, canAsk, 'deliver the files now');
   if (asked) return asked;
   const problems = [];
@@ -310,8 +310,18 @@ export function validateDevReply(reply, { canAsk = false } = {}) {
     }
   });
   if (!seen.has('index.html')) problems.push('index.html is required.');
+  // A QA test the Developer believes is wrong can be contested, with the reason.
+  const disputes = reply.disputes ?? [];
+  if (!Array.isArray(disputes)) problems.push('"disputes" must be a list of {"test":"QA-AI: ...","reason":"..."}.');
+  else {
+    disputes.forEach((d, i) => {
+      if (!contestable.includes(d?.test)) problems.push(`disputes[${i}]: "test" must be the exact name of a failing QA test you received: ${contestable.join(' | ') || '(none: no QA test failed)'}.`);
+      if (!isText(d?.reason, 1000)) problems.push(`disputes[${i}]: say in "reason" why the test is wrong.`);
+    });
+  }
   if (problems.length) throw new ContractError(problems);
   return {
+    disputes: Array.isArray(disputes) ? disputes.map((d) => ({ test: d.test, reason: d.reason.trim() })) : [],
     files: files.map((f) => ({ path: f.path, purpose: isText(f.purpose, 200) ? f.purpose.trim() : 'Product file', content: f.content })),
     summary: isText(reply.summary, 800) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
@@ -341,7 +351,7 @@ function syntaxError(source) {
  * modules and makes sure they parse.
  * @returns {{ testFile: string, tests: number, concerns: string[], summary: string | null }}
  */
-export function validateQaReply(reply, { canAsk = false, criteria = [] } = {}) {
+export function validateQaReply(reply, { canAsk = false, criteria = [], disputes = [] } = {}) {
   const asked = teamQuestions(reply, canAsk, 'write your tests now');
   if (asked) return asked;
   const problems = [];
@@ -383,6 +393,14 @@ export function validateQaReply(reply, { canAsk = false, criteria = [] } = {}) {
       }
     }
   }
+  // Every test the Developer contested gets an answer: fixed, or kept with the reason.
+  const disputeResponses = [];
+  for (const [i, d] of disputes.entries()) {
+    const r = (Array.isArray(reply.disputeResponses) ? reply.disputeResponses : []).find((x) => x?.test === d.test);
+    if (!r || (r.decision !== 'fixed' && r.decision !== 'kept') || !isText(r.reason, 1000)) {
+      problems.push(`The Developer contested your test "${d.test}" (${d.reason}). Answer it in "disputeResponses": {"test":${JSON.stringify(d.test)},"decision":"fixed" | "kept","reason":"..."} (dispute ${i + 1}).`);
+    } else disputeResponses.push({ test: d.test, reason: d.reason, decision: r.decision, answer: r.reason.trim() });
+  }
   if (reply.concerns != null && (!Array.isArray(reply.concerns) || !reply.concerns.every((c) => isText(c, 600)))) problems.push('"concerns" must be a list of short texts.');
   if (reply.requestOnly != null && (!Array.isArray(reply.requestOnly) || !reply.requestOnly.every((n) => typeof n === 'string' && n.startsWith('QA-AI: ')))) {
     problems.push('"requestOnly" must list the names ("QA-AI: ...") of the tests that check something the user asked but the requirements do not state.');
@@ -390,6 +408,7 @@ export function validateQaReply(reply, { canAsk = false, criteria = [] } = {}) {
   if (problems.length) throw new ContractError(problems);
   return {
     requestOnly: (reply.requestOnly ?? []).map((n) => n.trim()),
+    disputeResponses,
     criteriaChecks,
     testFile: source,
     tests: (source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? []).length,

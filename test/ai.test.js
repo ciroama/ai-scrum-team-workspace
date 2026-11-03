@@ -819,7 +819,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, DEV_ASKS, PO_ANSWERS, DEV_ASKS, { content: page('red') }, ACCEPT]);
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
-  assert.deepEqual(workflow.state.rules, { version: 5 });
+  assert.deepEqual(workflow.state.rules, { version: 6 });
 
   const question = events.find((e) => e.type === 'team.question');
   assert.equal(question.actor, 'dev');
@@ -849,7 +849,7 @@ test('the Developer asks the PO before coding; the answer reaches the Developer 
   const csv = requestsCsv(app.repository.analyticsSource(), {});
   const [header, row] = csv.replace(/^﻿/, '').trim().split('\r\n');
   const col = (name) => row.split(',')[header.split(',').indexOf(name)];
-  assert.equal(col('team rules'), 'v5');
+  assert.equal(col('team rules'), 'v6');
   assert.equal(col('Developer questions'), '1');
   assert.equal(col('team questions answered by the PO'), '1');
 });
@@ -1046,4 +1046,34 @@ test('the Developer cannot change the requirements; a failed call does not split
   assert.throws(() => validateDevReply({ files: [{ path: 'index.html', content: '<p>hi</p>' }, { path: 'REQUIREMENTS.md', content: 'golden bone: 5' }] }), /REQUIREMENTS\.md belongs to the PO/);
   const call = (status, model) => ({ type: 'ai.call', workflowId: 'w', actor: 'dev', status, detail: { model } });
   assert.equal(setupOf('w', [], [call('failure', 'sonnet'), call('success', 'claude-sonnet-5-5')]).dev, 'sonnet 5.5');
+});
+
+// ---- The Developer may contest a QA test it believes is wrong ----
+
+test('the Developer contests a wrong QA test; QA fixes it; the PO sees the discussion', async (t) => {
+  const NAME = 'QA-AI: the score is above 5';
+  const wrongTest = qaTests(`test(${JSON.stringify(NAME)}, () => {\n  assert.ok(0 > 5);\n});`);
+  const contest = { content: { ...page('red'), disputes: [{ test: NAME, reason: 'The simulated player jumps over every bone, so it can never score: the test measures the bot, not the game.' }] } };
+  const fixedTest = { content: { ...PASSING_QA.content, disputeResponses: [{ test: NAME, decision: 'fixed', reason: 'Right: my player jumped over bones. The test now only jumps over obstacles.' }] } };
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, { content: page('red') }, wrongTest, contest, fixedTest, ACCEPT], { qaMode: 'ai' });
+  const { workflow, events } = await run(app);
+  assert.equal(workflow.status, 'completed');
+  assert.equal(workflow.state.attempt, 2);
+
+  const received = await claude.received();
+  assert.match(option(received[3].args, '--system-prompt'), /you may contest it in "disputes"[\s\S]*Contestable tests: QA-AI: the score is above 5/);
+  const qaInput = JSON.parse(received[4].stdin);
+  assert.deepEqual(qaInput.contestedTests.map((d) => d.test), [NAME]);
+  assert.match(option(received[4].args, '--system-prompt'), /The Developer CONTESTED some of your tests/);
+  const review = JSON.parse(received[5].stdin);
+  assert.deepEqual(review.testsTheDeveloperContested.map((d) => [d.test, d.qaDecision]), [[NAME, 'fixed']]);
+
+  assert.match(events.find((e) => e.type === 'dev.dispute').summary, /contests QA's test "QA-AI: the score is above 5"/);
+  assert.equal(events.find((e) => e.type === 'qa.dispute').detail.decision, 'fixed');
+  const { process: p } = computeAnalytics(app.repository.analyticsSource(), {}, { agents: [] });
+  assert.equal(p.dev.find((m) => m.key === 'devDisputes').detail, '1 fixed by QA · 0 kept');
+  assert.equal(p.qa.find((m) => m.key === 'qaTestsFixed').value, 1);
+  // Only tests that really failed can be contested, and every objection needs an answer.
+  assert.throws(() => validateDevReply({ ...page('red'), disputes: [{ test: 'QA-AI: invented', reason: 'x' }] }, { contestable: [NAME] }), /exact name of a failing QA test/);
+  assert.throws(() => validateQaReply({ testFile: "import { test } from 'node:test';\ntest('QA-AI: x', () => {});" }, { disputes: [{ test: NAME, reason: 'r' }] }), /Answer it in "disputeResponses"/);
 });

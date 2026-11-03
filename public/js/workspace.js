@@ -400,6 +400,10 @@ function conversationItems(state, detail, ui, actions) {
           ]),
         );
         break;
+      case 'dev.dispute':
+      case 'qa.dispute':
+        items.push(agentMessage(state, event, [h('p', { className: 'muted small' }, event.type === 'dev.dispute' ? 'Test contested' : event.detail.decision === 'fixed' ? 'Test fixed after the objection' : 'Test kept'), h('p', null, event.summary)]));
+        break;
       case 'po.revision':
         items.push(agentMessage(state, event, [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.reasons || []).map((r) => h('li', null, h('span', { className: 'num' }, '•'), h('span', null, r))))]));
         break;

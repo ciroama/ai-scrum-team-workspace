@@ -405,7 +405,7 @@ export class Repository extends EventEmitter {
            AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call',
                         'po.clarification', 'clarification.answered', 'qa.concern', 'qa.verdict', 'defect.reported',
                         'po.review', 'po.requirements', 'qa.ai-tests', 'team.question', 'team.answer',
-                        'po.escalation', 'team.answered', 'po.revision')
+                        'po.escalation', 'team.answered', 'po.revision', 'dev.dispute', 'qa.dispute')
          ORDER BY id`,
       )
       .all()

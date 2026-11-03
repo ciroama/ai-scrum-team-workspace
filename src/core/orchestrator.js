@@ -29,8 +29,10 @@ export const REQUEST_LIMITS = { min: 3, max: 2000 };
  * 5: as 4, and the PO's final review sees the user's answers; when the PO
  *    finds its own requirements wrong, it corrects them before any rework
  *    (the Developer never changes the requirements).
+ * 6: as 5, and the Developer may contest a QA test it believes is wrong: QA
+ *    must fix it or explain why it is right, and the PO sees the discussion.
  */
-export const TEAM_RULES_VERSION = 5;
+export const TEAM_RULES_VERSION = 6;
 
 /** How many times the PO may correct its own requirements in one request. */
 const MAX_REVISIONS = 2;
@@ -756,6 +758,9 @@ export class Orchestrator {
     });
     this.#recordAiCalls(ctx, result.aiCalls);
     if (result.status === 'questions') return this.#asked(ctx, { from: 'dev', askKey, questions: result.questions });
+    for (const d of result.disputes ?? []) {
+      say({ type: 'dev.dispute', from: agent.id, to: 'qa', status: 'warning', summary: `The Developer contests QA's test "${d.test}": ${d.reason}`, detail: d });
+    }
     const written = await this.#writeFiles(ctx, result.files);
     say({ type: correcting ? 'dev.correction' : 'dev.implementation', status: 'success', summary: result.summary, detail: { attempt, files: written } });
 
@@ -772,7 +777,7 @@ export class Orchestrator {
     const files = written.map((f) => f.path);
     return {
       output: { summary: result.summary, files, commit },
-      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt }, previousSpec: null } },
+      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt }, previousSpec: null, pendingDisputes: result.disputes ?? [] } },
     };
   }
 
@@ -789,9 +794,22 @@ export class Orchestrator {
       canAsk: !state.asked?.[askKey],
       teamClarifications: state.teamClarifications ?? [],
       dir: ctx.dir,
+      disputes: state.pendingDisputes ?? [],
     });
     this.#recordAiCalls(ctx, plan.aiCalls);
     if (plan.status === 'questions') return this.#asked(ctx, { from: 'qa', askKey, questions: plan.questions });
+    const disputeLog = [...(state.disputeLog ?? [])];
+    for (const r of plan.disputeResponses ?? []) {
+      say({
+        type: 'qa.dispute',
+        from: agent.id,
+        to: 'dev',
+        status: r.decision === 'fixed' ? 'success' : 'warning',
+        summary: r.decision === 'fixed' ? `QA fixed its test "${r.test}" after the Developer's objection: ${r.answer}` : `QA keeps its test "${r.test}": ${r.answer}`,
+        detail: r,
+      });
+      disputeLog.push({ ...r, attempt: state.attempt });
+    }
     say({
       type: 'qa.plan',
       summary: plan.summary,
@@ -879,7 +897,7 @@ export class Orchestrator {
     }
     return {
       output: { summary: evaluation.summary, verdict: evaluation.verdict },
-      update: { stage: next, verified: false, state: { ...state, verification, poFeedback: null } },
+      update: { stage: next, verified: false, state: { ...state, verification, poFeedback: null, pendingDisputes: [], disputeLog } },
     };
   }
 
@@ -888,7 +906,7 @@ export class Orchestrator {
     const state = workflow.state;
     const rejections = state.poRejections ?? [];
     // The PO never receives the code: it judges by the request, the requirements and QA's evidence.
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections, teamClarifications: state.teamClarifications ?? [], dialogue: state.dialogue ?? [] });
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections, teamClarifications: state.teamClarifications ?? [], dialogue: state.dialogue ?? [], testDisputes: state.disputeLog ?? [] });
     this.#recordAiCalls(ctx, review.aiCalls);
     const { aiCalls: _calls, ...decision } = review;
     const qaPassed = state.verification?.verdict === 'pass';
