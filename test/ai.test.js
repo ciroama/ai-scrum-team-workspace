@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { startServer } from '../src/server/app.js';
 import { ClaudeCodeClient, parseJsonReply } from '../src/ai/claudeCode.js';
 import { validateDevReply, validatePoReply, validateQaReply, validateTeamAnswerReply } from '../src/ai/contracts.js';
@@ -124,14 +124,16 @@ const ACCEPT = { content: { decision: 'accept', summary: 'Accepted: the page doe
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 // qaMode 'auto': QA is AI-powered and its replies are added automatically after each delivery.
-async function aiApp(t, replies, { devMode = 'ai', qaMode = 'auto' } = {}) {
+async function aiApp(t, replies, { devMode = 'ai', qaMode = 'auto', relativeDataDir = false } = {}) {
   const auto = qaMode === 'auto';
   const claude = await fakeClaude(t, auto ? withQa(replies) : replies);
   if (auto) {
     const push = claude.push;
     claude.push = (...more) => push(...withQa(more));
   }
-  const app = await startServer({ port: 0, dataDir: await tempDir(t), claudeBinary: claude.binary });
+  const dataDir = await tempDir(t);
+  // relativeDataDir: as on a real install, where the data folder is "data", relative to where npm start runs.
+  const app = await startServer({ port: 0, dataDir: relativeDataDir ? relative(process.cwd(), dataDir) : dataDir, claudeBinary: claude.binary });
   t.after(() => app.close());
   await fetch(`${app.url}/api/agents/po`, json('PUT', { mode: 'ai' }));
   if (devMode === 'ai') await fetch(`${app.url}/api/agents/dev`, json('PUT', { mode: 'ai' }));
@@ -982,7 +984,8 @@ test('a product with behaviour keeps its rules in logic.js; QA simulates it with
       testFile: "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { createRequire } from 'node:module';\ntest('QA-AI: a jump lifts the player', () => {\n  const logic = createRequire(import.meta.url)('../logic.js');\n  assert.equal(logic.jump({ y: 0 }).y, 80);\n});\n",
     },
   };
-  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, noLogic, good, qa, ACCEPT], { qaMode: 'ai' });
+  // A relative data folder, as with npm start: QA's read-only tests must still reach the product.
+  const { app, claude } = await aiApp(t, [{ content: PO_SPEC }, noLogic, good, qa, ACCEPT], { qaMode: 'ai', relativeDataDir: true });
   const { workflow, events } = await run(app);
   assert.equal(workflow.status, 'completed');
   const received = await claude.received();
@@ -991,5 +994,7 @@ test('a product with behaviour keeps its rules in logic.js; QA simulates it with
   assert.match(option(received[3].args, '--system-prompt'), /tests behaviour through logic\.js/);
   // QA's own test really loaded logic.js in Node and simulated the jump.
   assert.deepEqual(events.find((e) => e.type === 'qa.ai-tests').detail.summary.pass, 1);
+  const files = (await app.orchestrator.listProductFiles(workflow.id)).files.map((f) => f.path);
+  assert.ok(!files.some((f) => f.startsWith('data/')), 'nothing of the workspace ends up inside the product');
   assert.equal(events.find((e) => e.type === 'qa.verdict').status, 'success');
 });

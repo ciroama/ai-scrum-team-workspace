@@ -1,7 +1,7 @@
 import { readFile, readdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { resolveInside, writeFile } from '../actions/writeFile.js';
 import { runCommand } from '../actions/runCommand.js';
 import { parseTap } from '../actions/tapParser.js';
@@ -80,7 +80,8 @@ export class Orchestrator {
     this.modelOf = modelOf;
     this.repository = repository;
     this.team = team;
-    this.dataDir = dataDir;
+    // Absolute: commands run inside the product folder, where a relative path would point somewhere else.
+    this.dataDir = resolve(dataDir);
     this.recipes = recipes;
     this.gitBinary = gitBinary;
     this.commandTimeoutMs = commandTimeoutMs;

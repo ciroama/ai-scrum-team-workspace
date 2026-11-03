@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../storage/database.js';
 import { Repository } from '../storage/repository.js';
@@ -82,7 +82,9 @@ function statusFor(error) {
  * @param {number} [options.previewPort]  0 (default) picks a free port
  * @param {string} [options.claudeBinary]  the `claude` command (overridable for tests)
  */
-export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBinary }) {
+export function createApp({ dataDir: dataDirOption, team, gitBinary, previewPort = 0, claudeBinary }) {
+  // Absolute, wherever the server was started from: commands run inside each product's folder.
+  const dataDir = resolve(dataDirOption);
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
   const aiSettings = new AiSettings({ repository, ...(claudeBinary ? { binary: claudeBinary } : {}) });
