@@ -416,7 +416,7 @@ function mountRoute() {
         h(
           'section',
           { className: 'panel' },
-          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three agents and you. Enable or disable an agent to change which work it can be assigned, and choose whether the PO and the Developer are scripted or AI-powered.'))),
+          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three agents and you. Enable or disable an agent to change which work it can be assigned, and choose whether each agent is scripted or AI-powered.'))),
           h('div', { id: 'ai-panel' }),
           h('div', { className: 'team-grid' }, h('div', { id: 'human-card' }), h('div', { id: 'agent-cards', className: 'agent-cards' })),
         ),

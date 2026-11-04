@@ -13,6 +13,7 @@ corrections, Git commits and every AI request.
 
 ## Contents
 
+- [Preview](#preview)
 - [Why this project exists](#why-this-project-exists)
 - [Ground rules](#ground-rules)
 - [The team](#the-team)
@@ -30,6 +31,32 @@ corrections, Git commits and every AI request.
 - [History](#history)
 - [Disclaimer](#disclaimer)
 - [License](#license)
+
+## Preview
+
+Screenshots of the real dashboard, taken after the scripted team (no AI)
+built a Hello World page: every step shown really ran.
+
+**The workspace.** The conversation of a request: the PO's requirements,
+the Developer's files, QA's verification and the PO's decision, with the
+stages on top and the team on the right.
+
+![The workspace: a completed request, stage by stage](docs/screenshots/workspace.png)
+
+**Analytics.** Statistics computed from the recorded work, each marked as
+recorded or calculated, with CSV exports.
+
+![Analytics: overview of the requests and how they ended](docs/screenshots/analytics.png)
+
+**Requirements.** Every agreed version of a product's requirements and
+acceptance criteria.
+
+![Requirements: version 1 of a product](docs/screenshots/requirements.png)
+
+**Team.** Each agent can be enabled or disabled, scripted or AI-powered
+(Claude Code), with its own model.
+
+![Team: the AI provider and the agents](docs/screenshots/team.png)
 
 ## Why this project exists
 
