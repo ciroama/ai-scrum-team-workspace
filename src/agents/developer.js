@@ -16,10 +16,10 @@ export class DeveloperAgent extends ScriptedAgent {
       title: 'Developer',
       summary: 'Implements the agreed requirements as real project files and fixes defects reported by QA.',
       responsibilities: [
-        'Implements the requirements',
+        'Decides how to build what the PO asks',
         'Creates and modifies project files',
         'Fixes defects reported by QA',
-        'Hands the implementation to QA',
+        'Meets the Definition of Done before handing over to QA',
       ],
     });
   }

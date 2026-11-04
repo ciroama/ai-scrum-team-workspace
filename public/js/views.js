@@ -154,6 +154,24 @@ export function renderTeam(state, ui, actions) {
               )
             : h('span', { className: 'muted small' }, 'Always scripted, so verification stays independent of the AI'),
         ),
+        agent.supportsAi && agent.mode === 'ai'
+          ? h(
+              'div',
+              { className: 'mode-row' },
+              h('span', { className: 'state-label' }, 'Model'),
+              h(
+                'select',
+                {
+                  className: 'mode-select',
+                  disabled: ui.pendingModes.has(agent.id),
+                  'aria-label': `Model ${agent.label} uses`,
+                  onchange: (e) => actions.setAgentModel(agent.id, e.target.value),
+                },
+                h('option', { value: '', selected: !agent.model }, `Workspace default (${state.ai.model})`),
+                [...new Set([...state.ai.suggestedModels, ...(agent.model ? [agent.model] : [])])].map((m) => h('option', { value: m, selected: agent.model === m }, m)),
+              ),
+            )
+          : null,
         agent.finishingTask &&
           h('p', { className: 'transition-note' }, `Disabled while working: "${agent.finishingTask}" will finish safely, then ${agent.label} receives no new assignments.`),
         h('p', { className: 'activity' }, agent.activity),
@@ -213,11 +231,21 @@ export function stageStates(state, detail) {
   });
 }
 
+/** What the team is waiting for from you, when a request is paused. */
+export function waitingFor(workflow) {
+  const st = workflow.state || {};
+  if (st.waitingFor === 'team') {
+    const who = st.teamQuestions && st.teamQuestions.from === 'qa' ? 'QA' : 'The Developer';
+    return { short: 'Waiting for your answer', title: `${who} asked something only you can decide`, text: 'The PO passed the question on to you. Answer it in the box below to continue this request.' };
+  }
+  return { short: 'Waiting for your answer', title: 'The PO asked you a question', text: `${st.clarification ? st.clarification.message : ''} Answer it in the box below to continue this request.` };
+}
+
 export function outcomeStep(state, workflow) {
   const map = {
     completed: ['done', workflow.verified ? 'Completed · verified' : 'Completed'],
     failed: ['failed', 'Failed'],
-    needs_clarification: ['blocked', 'Waiting for your answer'],
+    needs_clarification: ['blocked', waitingFor(workflow).short],
     cancelled: ['skipped', 'Cancelled'],
     interrupted: ['interrupted', 'Interrupted'],
     blocked: ['blocked', 'Blocked'],
@@ -237,7 +265,7 @@ export function verificationBadge(workflow) {
   }
   if (['running'].includes(workflow.status)) return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Verification pending');
   // Nothing was built yet: there is nothing to verify.
-  if (workflow.status === 'needs_clarification') return h('span', { className: 'status-pill', dataset: { status: 'none' } }, 'Waiting for your answer');
+  if (workflow.status === 'needs_clarification') return h('span', { className: 'status-pill', dataset: { status: 'none' } }, waitingFor(workflow).short);
   return h('span', { className: 'status-pill', dataset: { status: 'unverified' } }, 'Not verified');
 }
 
@@ -258,7 +286,7 @@ export function progressBanner(state, workflow, ui, actions) {
           ? canResume
             ? `${agent.label} is enabled again. Click Resume to continue from ${stage.title}; earlier work is kept.`
             : `Enable ${agent.label} in the team panel, then click Resume to continue from ${stage.title}. Earlier work is kept.`
-          : `The application stopped during this stage. Resume runs ${stage.title} again; earlier stages are kept.`,
+          : `The work stopped during this stage (you stopped it, or the application was closed). Resume runs ${stage.title} again; earlier stages are kept.`,
       ),
       h(
         'div',
@@ -269,11 +297,11 @@ export function progressBanner(state, workflow, ui, actions) {
     );
   }
   if (workflow.status === 'needs_clarification') {
-    const clarification = workflow.state && workflow.state.clarification;
+    const waiting = waitingFor(workflow);
     return h(
       'div',
       { className: 'banner', dataset: { tone: 'warning' } },
-      h('div', { className: 'banner-text' }, h('strong', null, 'The PO asked you a question'), clarification ? clarification.message : '', ' Answer it in the box below to continue this request.'),
+      h('div', { className: 'banner-text' }, h('strong', null, waiting.title), waiting.text),
     );
   }
   if (workflow.status === 'failed') {
@@ -467,8 +495,8 @@ function outcomeCard(state, detail) {
       break;
     case 'needs_clarification':
       tone = 'warning';
-      title = 'Waiting for your answer to the PO';
-      text = st.clarification ? st.clarification.message : 'The PO needs clarification.';
+      title = waitingFor(workflow).title;
+      text = waitingFor(workflow).text;
       break;
     case 'interrupted':
       tone = 'warning';

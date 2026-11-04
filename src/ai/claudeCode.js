@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { track } from '../actions/children.js';
 
 export const CLAUDE_CODE = {
   id: 'claude-code',
@@ -142,7 +143,7 @@ export class ClaudeCodeClient {
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_AUTH_TOKEN;
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = track(spawn(this.binary, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }));
       let stdout = '';
       let stderr = '';
       let timedOut = false;
@@ -163,6 +164,10 @@ export class ClaudeCodeClient {
       });
       child.on('close', (exitCode) => {
         clearTimeout(timer);
+        if (child.stoppedOnPurpose) {
+          reject(new Error('Stopped by you.'));
+          return;
+        }
         if (timedOut) {
           reject(new AiUnavailableError('timeout', `Claude Code gave no answer within ${Math.round(this.timeoutMs / 1000)} s.`));
           return;

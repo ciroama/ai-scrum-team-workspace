@@ -9,6 +9,8 @@ export const STAGES = {
   verification: { id: 'verification', title: 'Verification', agent: 'qa', taskTitle: 'Verify the implementation' },
   correction: { id: 'correction', title: 'Correction', agent: 'dev', taskTitle: 'Fix the reported defects' },
   review: { id: 'review', title: 'Final review', agent: 'po', taskTitle: 'Review the verified outcome' },
+  // The Developer or QA asked the PO before doing their work.
+  consultation: { id: 'consultation', title: "Team's questions", agent: 'po', taskTitle: "Answer the team's questions" },
 };
 
 /** Display order; correction only happens when QA reports defects. */
@@ -24,6 +26,7 @@ export const UPCOMING_AGENTS = {
   correction: ['qa', 'po'],
   verification: ['po', 'dev'],
   review: [],
+  consultation: ['dev', 'qa'],
 };
 
 export const WORKFLOW_STATUS = {
@@ -31,7 +34,7 @@ export const WORKFLOW_STATUS = {
   blocked: 'Blocked',
   completed: 'Completed',
   failed: 'Failed',
-  needs_clarification: 'Needs clarification',
+  needs_clarification: 'Waiting for you',
   interrupted: 'Interrupted',
   cancelled: 'Cancelled',
 };

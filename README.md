@@ -13,6 +13,7 @@ corrections, Git commits and every AI request.
 
 ## Contents
 
+- [Preview](#preview)
 - [Why this project exists](#why-this-project-exists)
 - [Ground rules](#ground-rules)
 - [The team](#the-team)
@@ -30,6 +31,32 @@ corrections, Git commits and every AI request.
 - [History](#history)
 - [Disclaimer](#disclaimer)
 - [License](#license)
+
+## Preview
+
+Screenshots of the real dashboard, taken after the scripted team (no AI)
+built a Hello World page: every step shown really ran.
+
+**The workspace.** The conversation of a request: the PO's requirements,
+the Developer's files, QA's verification and the PO's decision, with the
+stages on top and the team on the right.
+
+![The workspace: a completed request, stage by stage](docs/screenshots/workspace.png)
+
+**Analytics.** Statistics computed from the recorded work, each marked as
+recorded or calculated, with CSV exports.
+
+![Analytics: overview of the requests and how they ended](docs/screenshots/analytics.png)
+
+**Requirements.** Every agreed version of a product's requirements and
+acceptance criteria.
+
+![Requirements: version 1 of a product](docs/screenshots/requirements.png)
+
+**Team.** Each agent can be enabled or disabled, scripted or AI-powered
+(Claude Code), with its own model.
+
+![Team: the AI provider and the agents](docs/screenshots/team.png)
 
 ## Why this project exists
 
@@ -84,10 +111,37 @@ add noise to what is being observed.
 | Member | Kind | Responsibility |
 |---|---|---|
 | **You** | Human | Describe what to build, ask for changes, enable or disable agents, resume or cancel blocked work |
-| **PO** (Product Owner) | Scripted or AI-powered | Refines your request by asking questions, then writes requirements, assumptions and machine-checkable acceptance criteria; applies change requests to the requirements; reviews the verified result |
+| **PO** (Product Owner) | Scripted or AI-powered | Refines your request by asking questions, then writes requirements, assumptions and acceptance criteria in the user's words (never how to build or test them); applies change requests to the requirements; reviews the verified result |
 | **Developer** | Scripted or AI-powered | Writes the product files; changes them for change requests; fixes defects reported by QA |
-| **QA** (Quality Assurance) | Scripted or AI-powered | Generates one deterministic test per acceptance criterion, runs all tests, reports results and defects, and re-tests every correction. When AI-powered, it also writes tests of its own from your original request and flags requirements that may not match it |
+| **QA** (Quality Assurance) | Scripted or AI-powered | Turns every acceptance criterion into automated tests, runs them, reports results and defects, and re-tests every correction. When AI-powered, it decides how to test each criterion of the AI-powered PO, writes tests of its own from your original request, and flags requirements that may not match it |
 | Orchestrator | Infrastructure | Assigns each stage to the responsible agent if it is enabled, executes the work, records every step |
+
+### Roles, as the Scrum Guide defines them
+
+The agents follow the accountabilities of the
+[Scrum Guide (2020)](https://scrumguides.org/scrum-guide.html). Each AI
+agent receives its role in its instructions (`src/agents/scrumRoles.js`):
+
+| Role | Accountable for (Scrum Guide) | In this workspace | Never |
+|---|---|---|---|
+| **Product Owner** | Maximising the value of the product; creating, communicating and ordering the Product Backlog items so they are understood | Decides **what** is built and **why**: clarifies with you, writes requirements and acceptance criteria in your words, answers the Developer's and QA's questions, judges the result from QA's evidence | Says **how** to build or test it: no files, code, technical choices or tests; never reads the code |
+| **Developers** | Creating a usable Increment; planning the work; instilling quality by meeting the Definition of Done. How the work is done is their decision alone | **Developer**: decides **how** to build what the PO asks, asks the PO when *what* is unclear, fixes defects and rework | Changes the requirements or writes QA's tests |
+| | | **QA**: Scrum has no separate tester role, so QA is a Developer specialised in testing. Decides **how** each criterion is verified, writes the tests, holds the team to the Definition of Done | Changes the requirements (it raises a concern to the PO) or the product (it reports a defect to the Developer) |
+
+There is no Scrum Master agent: the orchestrator only runs the process
+(who works next, what is recorded), and you are the user and stakeholder.
+
+**Definition of Done**, the quality every increment must meet before the
+PO can accept it:
+
+- Every acceptance criterion is covered by at least one automated test
+  written by QA, and every test passes.
+- The product opens from `index.html` directly from disk and works offline.
+- If the product has behaviour (a game, a calculator…), all its rules are in
+  `logic.js`, which loads without a browser, so QA can test them.
+- No open defects: everything QA or the PO reported is fixed and verified
+  again.
+- The work is committed to the product's own Git repository.
 
 ### Scripted or AI-powered
 
@@ -122,8 +176,9 @@ of Node modules. A failing QA test is a defect for the Developer; a QA test
 file that crashes is QA's own problem and never counts against the product.
 
 When the PO is AI-powered, its **final acceptance** is an AI decision too:
-the PO reads the request, the requirements, QA's results and the product
-files, then accepts or rejects with its reasons. One guard stays fixed: the
+the PO reads the request, the requirements and QA's results (never the
+code: like a real PO it judges the product, not the implementation), then
+accepts or rejects with its reasons. One guard stays fixed: the
 PO **may reject** a product whose tests pass (for example when it does not
 really do what you asked), but **cannot accept** one that QA did not
 verify. The scripted PO accepts by rule: only if QA verified every
@@ -138,7 +193,11 @@ flowchart TD
     A -- "no: asks a question" --> Q([You answer<br/>in the same request])
     Q --> A
     A -- "yes: requirements +<br/>acceptance criteria" --> I["Developer: implementation<br/>files written + Git commit"]
+    I -. "a question first" .-> K{"PO answers,<br/>or passes it on to you"}
+    K -.-> I
     I --> V{"QA: verification<br/>Do all checks pass?"}
+    V -. "a question first" .-> K2{"PO answers,<br/>or passes it on to you"}
+    K2 -.-> V
     V -- "no, attempts left" --> C["Developer: correction<br/>of QA's defects"]
     C --> V
     V -- "yes" --> R{"PO: final review<br/>Does it do what was asked?"}
@@ -150,26 +209,36 @@ flowchart TD
 ```
 
 1. **Requirement analysis (PO).** The PO writes `REQUIREMENTS.md` with
-   requirements and acceptance criteria. Each criterion has a check that QA
-   can test automatically, such as "the page shows the text *hello world*"
-   or "the background colour is green". If anything is open, unclear or
+   requirements and acceptance criteria. They describe only what you see,
+   do and get, such as "the page shows the text *hello world*" or "the
+   background colour is green": never file names, code or technical
+   choices, which belong to the Developer, nor tests, which belong to QA. If anything is open, unclear or
    cannot be built, the PO asks you instead of guessing. The request then waits for
    your answer: you reply in the same request box ("For" shows **Answer the
    PO's question**), and the PO continues **the same request**, seeing all
    its questions and all your answers. Only the latest request of a product
    can be left waiting, for example if you stop before answering.
 2. **Implementation (Developer).** The product files are written to disk and
-   committed to the product's own Git repository.
+   committed to the product's own Git repository. Before writing the code,
+   an AI-powered Developer may **ask the PO questions** (once per piece of
+   work, at most 5). The PO answers from the requirements and what you
+   already said, or **passes the question on to you** when only you can
+   decide; the request then waits for your answer, as with the PO's own
+   questions. The answers go to the Developer, QA and the PO's final review.
 3. **Verification (QA).** QA generates `test/acceptance.test.mjs` from the
    criteria, runs every test, and reports a verdict with evidence. An
    AI-powered QA also runs its own tests (`qa/ai-checks.mjs`, read-only) and
-   raises concerns for the PO.
+   raises concerns for the PO. Before writing its tests it may ask the PO
+   questions, in the same way as the Developer.
 4. **Correction (Developer).** If tests fail, QA sends the defects back to
    the Developer, and QA verifies the correction again.
 5. **Final review (PO).** The PO accepts or rejects the product:
    - It **can never accept** a product that QA did not verify.
-   - An AI-powered PO **can reject** a verified product when, reading the
-     files, it does not really do what you asked. The product then goes
+   - An AI-powered PO **can reject** a verified product when, from QA's
+     evidence and concerns, it does not really do what you asked (your
+     request together with all your answers). If the problem is in its own
+     requirements, the PO first corrects them, then the Developer changes
+     the product and QA verifies it again. The product then goes
      back to the Developer with the PO's reasons, QA verifies the rework,
      and the PO reviews it again, remembering its earlier reasons.
 6. **Limit.** The Developer has **three implementation attempts** in
@@ -180,14 +249,44 @@ flowchart TD
 One workflow runs at a time. A blocked workflow keeps that slot until you
 resume or cancel it.
 
+### Team rules versions
+
+Every request records the version of the team's rules it ran under, so
+experiments under different rules can be compared (Analytics, "Compare
+models", and the `team rules` column of the requests CSV):
+
+- **v1**: the Developer and QA could not ask questions, and the AI-powered
+  PO read the product files in its final review.
+- **v2**: the Developer and QA may ask the PO, who answers or passes the
+  question on to you; the PO never reads the code.
+- **v3**: as v2, and the PO writes its acceptance criteria in words, never
+  how to build or test them; QA decides how to test each one.
+- **v4**: as v3, and a product with behaviour keeps all its rules
+  in `logic.js`, which must load without a browser (the workspace checks it
+  before accepting the Developer's files). QA tests the behaviour through it,
+  by simulating the product step by step: tests run in Node, with no screen,
+  canvas or keyboard.
+- **v5**: as v4, and the PO's final review sees your answers, not
+  only your first message. When the review finds the PO's own requirements
+  wrong, the PO corrects them (a new version) before the Developer changes
+  the product, at most twice per request; the Developer never changes the
+  requirements, and `REQUIREMENTS.md` is not its to write.
+- **v6** (current): as v5, and the Developer may contest a QA test it
+  believes is wrong (with its reason). At the next verification QA must fix
+  the test or explain why it is right, and the PO's review sees the
+  discussion. Statistics count contested and fixed tests.
+
+Planned for the next release: an approval checkpoint, where the PO waits
+for you to approve the requirements before the Developer starts.
+
 ### Who decides what
 
 | Decision | Scripted mode | AI-powered mode | Safeguard |
 |---|---|---|---|
 | Is the request clear and buildable? | PO matches it against fixed recipes | PO (Claude), in rounds of questions | Before you answer anything, a PO that decides a detail you never gave is refused and must ask |
-| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude) | Every criterion must use a check type QA can test automatically; every assumption says who decided it |
+| Requirements and acceptance criteria | PO copies them from the recipe | PO (Claude), in the user's words | Every assumption says who decided it; any test the PO adds is ignored |
 | The product files | Developer fills a template | Developer (Claude) | Files are checked before writing: inside the product folder, allowed types, not in `test/`, nothing loaded from the internet |
-| Do the checks pass? | QA runs the deterministic tests | QA runs the same deterministic tests **plus** tests it writes from your request | Real `node --test` runs; the deterministic checks always run; QA's own tests run read-only and can only add defects |
+| How is each criterion tested, and does it pass? | QA runs the recipe's deterministic tests | QA (Claude) turns each criterion into a deterministic check or into tests of its own, **plus** tests from your request | Real `node --test` runs; every criterion must be covered; QA's own tests run read-only. An AI-powered PO needs an AI-powered QA: a scripted QA blocks with that explanation |
 | Accept or reject | PO by rule: accept only if QA verified everything | PO (Claude), with its reasons | Claude may reject a verified product, but an "accept" without QA verification is refused |
 
 Every AI answer must match the agent's **contract** (a fixed JSON shape
@@ -216,7 +315,16 @@ screen:
   **Projects**, shows its latest conversation and makes the next request a
   change to it.
 
-Change requests need the PO and the Developer in AI-powered mode. The
+When you come back to a product you say **why**: 🐞 **Bug** (something does
+not work as agreed or as you expected) or ✏️ **Change request** (something
+new or different). For a bug the PO keeps the requirements unless the bug
+shows one was wrong, adds a criterion that checks the fix, and says where
+the bug comes from: the **requirements** or the **code**. Analytics counts
+the bugs you reported, how many got past a delivery QA had verified, and
+their origin; Compare models shows the bugs found later per verified
+delivery of each team setup.
+
+Bug reports and change requests need the PO and the Developer in AI-powered mode. The
 scripted PO only recognises new Hello World requests, and says so.
 
 ## What the dashboard shows
@@ -249,8 +357,9 @@ Details worth knowing:
   computed, and shows "Not enough data yet" rather than a guess. **Export
   CSV** downloads, with the current filters, the statistics on the page, one
   row per request (status, verification, clarifications, corrections, tests,
-  AI requests and tokens), or one row per agent task, for your own analysis
-  in a spreadsheet.
+  AI requests and tokens), one row per concern QA raised about the
+  requirements (with the PO's decision and reason), or one row per agent
+  task, for your own analysis in a spreadsheet.
 - **Deleting** a product (on Projects or Repository) is permanent and needs
   your confirmation. It removes the product's requests, conversations,
   activity, statistics, files and Git history. **Delete all products** resets
@@ -315,6 +424,10 @@ How the integration behaves:
 - **Subscription, not paid API.** `ANTHROPIC_API_KEY` and
   `ANTHROPIC_AUTH_TOKEN` are removed from Claude Code's environment, so a key
   set on your computer can never turn this into pay-per-use billing.
+- **One model per agent.** The default model is set in **AI provider**; each
+  AI-powered agent can use its own (for example the Developer on `opus`, QA
+  on `haiku`), chosen on its card. Every request records the model of each
+  agent, and **Analytics → Compare models** puts team setups side by side.
 - **Usage limits.** Requests count against your subscription's usage limit.
   A workflow uses about 2–4 requests, and more when QA finds defects. The
   default model is `sonnet`, which uses less of the limit than `opus`; you

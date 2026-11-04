@@ -20,6 +20,7 @@ const ui = {
   loaded: false,
   targetProductId: null, // the product the next request changes; null = a new product
   answering: null, // the request whose PO question the next message answers
+  requestType: 'change', // coming back to a product: 'bug' or 'change'
   deleting: null, // product id being deleted ('*' for all)
   requirementsProductId: null,
   requirements: null,
@@ -76,8 +77,9 @@ async function refresh() {
   refreshing = true;
   try {
     state = await api('/api/state');
-    // Work in progress (running or blocked) is shown on opening, not hidden.
-    if (!ui.loaded && state.activeWorkflowId) ui.blank = false;
+    // Work in progress (running or blocked), or a request waiting for you, is shown on opening, not hidden.
+    const focus = state.workflows.find((w) => w.id === state.focusWorkflowId);
+    if (!ui.loaded && (state.activeWorkflowId || (focus && focus.status === 'needs_clarification'))) ui.blank = false;
     ui.loaded = true;
     if (ui.blank) {
       ui.selectedId = null;
@@ -138,7 +140,7 @@ const actions = {
         : await api('/api/workflows', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ request: text, productId: ui.targetProductId }),
+            body: JSON.stringify({ request: text, productId: ui.targetProductId, type: ui.targetProductId ? ui.requestType : undefined }),
           });
       ui.blank = false;
       ui.draft = '';
@@ -148,7 +150,7 @@ const actions = {
       if (counter) counter.textContent = '0 / 2000';
       ui.selectedId = workflow.id;
       ui.pinned = false;
-      const started = { tone: 'success', text: ui.answering ? 'Answer sent. The PO continues this request.' : 'Workflow started. Follow the team in the conversation above.' };
+      const started = { tone: 'success', text: ui.answering ? 'Sent. The team continues this request.' : 'Workflow started. Follow the team in the conversation above.' };
       ui.feedback = started;
       setTimeout(() => {
         if (ui.feedback === started) {
@@ -194,6 +196,19 @@ const actions = {
     }
   },
 
+  async setAgentModel(agentId, model) {
+    ui.pendingModes.add(agentId);
+    render();
+    try {
+      await api(`/api/agents/${agentId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+    } catch (error) {
+      showError(`Could not change the model: ${error.message}`);
+    } finally {
+      ui.pendingModes.delete(agentId);
+      await refresh();
+    }
+  },
+
   async saveAi(changes) {
     try {
       await api('/api/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
@@ -218,6 +233,11 @@ const actions = {
 
   async resume(workflowId) {
     await workflowAction(workflowId, 'resume');
+  },
+
+  async stop(workflowId) {
+    if (!window.confirm('Stop the agent now? Its current step is not kept; Resume runs it again, or you can cancel the workflow.')) return;
+    await workflowAction(workflowId, 'stop');
   },
 
   async cancel(workflowId) {
@@ -268,6 +288,11 @@ const actions = {
       const input = document.getElementById('request-input');
       if (input) input.focus();
     });
+  },
+
+  setRequestType(type) {
+    ui.requestType = type;
+    render();
   },
 
   setTarget(productId) {
@@ -391,7 +416,7 @@ function mountRoute() {
         h(
           'section',
           { className: 'panel' },
-          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three agents and you. Enable or disable an agent to change which work it can be assigned, and choose whether the PO and the Developer are scripted or AI-powered.'))),
+          h('div', { className: 'view-head' }, h('div', null, h('h1', null, 'AI Scrum Team'), h('p', { className: 'muted' }, 'Three agents and you. Enable or disable an agent to change which work it can be assigned, and choose whether each agent is scripted or AI-powered.'))),
           h('div', { id: 'ai-panel' }),
           h('div', { className: 'team-grid' }, h('div', { id: 'human-card' }), h('div', { id: 'agent-cards', className: 'agent-cards' })),
         ),

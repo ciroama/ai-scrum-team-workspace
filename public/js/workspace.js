@@ -167,6 +167,7 @@ export function mountHome(ui, actions) {
             h('select', { id: 'product-target', 'aria-label': 'New product or change to an existing product', onchange: (e) => actions.setTarget(e.target.value || null) }),
           ),
         ),
+        h('div', { id: 'request-type', className: 'request-type', role: 'radiogroup', 'aria-label': 'Why you come back to this product' }),
         h(
           'div',
           { className: 'composer-box' },
@@ -279,7 +280,7 @@ function conversationItems(state, detail, ui, actions) {
             'li',
             { className: 'msg msg-user' },
             avatarFor('user'),
-            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), d.baseVersion ? h('p', { className: 'muted small' }, `Change request on requirements v${d.baseVersion}`) : null, h('p', null, d.requestText)),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), d.baseVersion ? h('p', { className: 'muted small' }, `${d.requestType === 'bug' ? '🐞 Bug report' : 'Change request'} on requirements v${d.baseVersion}`) : null, h('p', null, d.requestText)),
           ),
         );
         break;
@@ -294,6 +295,8 @@ function conversationItems(state, detail, ui, actions) {
               h('p', { className: 'muted small' }, 'Acceptance criteria'),
               h('ol', { className: 'plan' }, d.acceptanceCriteria.map((c) => h('li', null, h('span', { className: 'num ac' }, c.id), h('span', null, c.description)))),
               assumptionList(d.assumptions),
+              d.whyNoQuestions ? h('p', { className: 'muted small' }, `No questions asked. The PO's reason: ${d.whyNoQuestions}`) : null,
+              d.bugOrigin ? h('p', { className: 'muted small' }, `Bug origin: ${d.bugOrigin === 'requirements' ? 'the requirements missed or misstated it' : 'the code (the requirements were right)'}.`) : null,
             ],
           ),
         );
@@ -365,7 +368,7 @@ function conversationItems(state, detail, ui, actions) {
             d.decidedBy === 'rule'
               ? h('p', { className: 'muted small' }, 'Acceptance rule, not an AI decision: the PO accepts only when QA has verified every criterion.')
               : d.decidedBy === 'ai'
-                ? h('p', { className: 'muted small' }, 'Decided by the AI-powered PO after reading the files and QA\'s evidence. It can reject a product whose tests pass, but cannot accept one that QA did not verify.')
+                ? h('p', { className: 'muted small' }, 'Decided by the AI-powered PO from your request, the requirements and QA\'s evidence (it does not read the code). It can reject a product whose tests pass, but cannot accept one that QA did not verify.')
                 : null,
           ),
         );
@@ -389,6 +392,52 @@ function conversationItems(state, detail, ui, actions) {
         if (event === lastBlocked && workflow.status === 'blocked') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
         else items.push(note(event));
         break;
+      case 'team.question':
+        items.push(
+          agentMessage(state, event, [
+            h('p', null, event.summary),
+            h('ol', { className: 'plan' }, (d.questions || []).map((q, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('strong', null, q.question), q.why ? h('span', { className: 'muted small', style: 'display:block' }, `Why it matters: ${q.why}`) : null)))),
+          ]),
+        );
+        break;
+      case 'dev.dispute':
+      case 'qa.dispute':
+        items.push(agentMessage(state, event, [h('p', { className: 'muted small' }, event.type === 'dev.dispute' ? 'Test contested' : event.detail.decision === 'fixed' ? 'Test fixed after the objection' : 'Test kept'), h('p', null, event.summary)]));
+        break;
+      case 'po.revision':
+        items.push(agentMessage(state, event, [h('p', null, event.summary), h('ul', { className: 'plan' }, (d.reasons || []).map((r) => h('li', null, h('span', { className: 'num' }, '•'), h('span', null, r))))]));
+        break;
+      case 'team.answer':
+        items.push(
+          agentMessage(state, event, [
+            h('p', null, event.summary),
+            h('ol', { className: 'plan' }, (d.answers || []).map((a, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('span', { className: 'muted', style: 'display:block' }, a.question), a.answer)))),
+          ]),
+        );
+        break;
+      case 'po.escalation':
+        items.push(
+          agentMessage(
+            state,
+            event,
+            [
+              h('p', null, event.summary),
+              h('ol', { className: 'plan' }, (d.questions || []).map((q, i) => h('li', null, h('span', { className: 'num' }, i + 1), h('span', null, h('strong', null, q.question), q.poWhy ? h('span', { className: 'muted small', style: 'display:block' }, `Why the PO asks you: ${q.poWhy}`) : null)))),
+            ],
+            workflow.status === 'needs_clarification' && event === last(events.filter((e) => e.type === 'po.escalation'))
+              ? h('p', { className: 'muted small', style: 'margin-top:10px' }, 'Waiting for your answer: write it in the box below.')
+              : null,
+          ),
+        );
+        break;
+      case 'team.answered':
+        items.push(h(
+            'li',
+            { className: 'msg msg-user' },
+            avatarFor('user'),
+            h('div', { className: 'bubble' }, h('div', { className: 'msg-head' }, h('span', { className: 'who' }, 'You'), kindBadge('human'), h('time', { datetime: event.ts }, time(event.ts))), h('p', { className: 'muted small' }, `Answer to the ${d.for === 'qa' ? 'QA' : 'Developer'}`), h('p', null, d.answer)),
+          ));
+        break;
       case 'clarification.answered':
         items.push(
           h(
@@ -406,6 +455,7 @@ function conversationItems(state, detail, ui, actions) {
       case 'workflow.failed':
       case 'workflow.needs_clarification':
       case 'workflow.interrupted':
+      case 'workflow.stopped':
       case 'agent.enabled':
       case 'agent.disabled':
       case 'agent.mode':
@@ -422,7 +472,17 @@ function conversationItems(state, detail, ui, actions) {
   if (workflow.status === 'interrupted') items.push(h('li', null, progressBanner(state, workflow, ui, actions)));
   const running = tasks.find((t) => t.status === 'running');
   if (running) {
-    items.push(h('li', { className: 'live-line' }, h('span', { className: 'dot' }), `${agentLabel(state, running.agentId)} is working: ${running.title.toLowerCase()}…`));
+    items.push(
+      h(
+        'li',
+        { className: 'live-line' },
+        h('span', { className: 'dot' }),
+        `${agentLabel(state, running.agentId)} is working: ${running.title.toLowerCase()}…`,
+        workflow.status === 'running'
+          ? h('button', { type: 'button', className: 'btn btn-sm btn-danger live-stop', disabled: ui.pendingAction === workflow.id, title: 'Stop the agent now. You can resume this stage later, or cancel the workflow.', onclick: () => actions.stop(workflow.id) }, 'Stop')
+          : null,
+      ),
+    );
   }
   return items;
 }
@@ -463,16 +523,20 @@ export function renderComposer(state, ui, actions) {
 
   const target = state.products.find((p) => p.id === ui.targetProductId) || null;
   if (ui.answering) {
+    const waiting = (state.workflows.find((w) => w.id === ui.answering) || {}).waitingFor;
+    const text = {
+      team: ['Answer the team\'s question', 'Your answer to the question the PO passed on to you. It continues this same request.', 'Send answer', 'A teammate asked something only you can decide. Your answer goes to them and to the PO, and the work continues.'],
+    }[waiting] || ["Answer the PO's question", "Your answer to the PO's question. It continues this same request.", 'Send answer', 'The PO is waiting for your answer. Answering continues this request; the PO sees its questions and all your answers.'];
     mount(
       'product-target',
-      h('option', { value: '__answer', selected: true }, "Answer the PO's question"),
+      h('option', { value: '__answer', selected: true }, text[0]),
       h('option', { value: '' }, 'A new product'),
       state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id }, `Change: ${p.title} (v${p.versions})`)),
     );
-    input.placeholder = "Your answer to the PO's question. It continues this same request.";
-    button.firstChild.textContent = ui.submitting ? 'Sending…' : 'Send answer';
+    input.placeholder = text[1];
+    button.firstChild.textContent = ui.submitting ? 'Sending…' : text[2];
     mount('workspace-kind', state.agents.some((a) => a.mode === 'ai') ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
-    mount('supported', 'The PO is waiting for your answer. Answering continues this request; the PO sees its questions and all your answers.');
+    mount('supported', text[3]);
     return finishComposer(state, ui, active);
   }
   mount(
@@ -480,10 +544,27 @@ export function renderComposer(state, ui, actions) {
     h('option', { value: '', selected: !target }, 'A new product'),
     state.products.filter((p) => p.versions > 0).map((p) => h('option', { value: p.id, selected: target && p.id === target.id }, `Change: ${p.title} (v${p.versions})`)),
   );
-  input.placeholder = target
-    ? `Describe the change to "${target.title}", e.g. "Make the text blue" or "Add a button that…"`
-    : 'Describe what you would like to build, e.g. "Build a simple Hello World web application."';
-  button.firstChild.textContent = ui.submitting ? 'Starting…' : target ? 'Request change' : 'Start workflow';
+  const bug = Boolean(target) && ui.requestType === 'bug';
+  // Coming back to a product: you say whether it is a bug or a change request.
+  const typeEl = document.getElementById('request-type');
+  typeEl.hidden = !target;
+  mount(
+    typeEl,
+    target
+      ? [
+          ['bug', '🐞 Bug', 'Something does not work as agreed or as you expected'],
+          ['change', '✏️ Change request', 'You want something new or different'],
+        ].map(([value, label, title]) =>
+          h('button', { type: 'button', role: 'radio', 'aria-checked': String(ui.requestType === value), className: 'type-chip', title, onclick: () => actions.setRequestType(value) }, label),
+        )
+      : null,
+  );
+  input.placeholder = !target
+    ? 'Describe what you would like to build, e.g. "Build a simple Hello World web application."'
+    : bug
+      ? `Describe what does not work in "${target.title}": what you did, what happened, what you expected.`
+      : `Describe the change to "${target.title}", e.g. "Make the text blue" or "Add a button that…"`;
+  button.firstChild.textContent = ui.submitting ? 'Starting…' : !target ? 'Start workflow' : bug ? 'Report bug' : 'Request change';
 
   const anyAi = state.agents.some((a) => a.mode === 'ai');
   mount('workspace-kind', anyAi ? kindBadge('ai', state.ai.model) : kindBadge('scripted'));
@@ -492,8 +573,10 @@ export function renderComposer(state, ui, actions) {
     mount(
       'supported',
       poAi
-        ? `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
-        : 'Change requests need the PO and the Developer in AI-powered mode (Team page).',
+        ? bug
+          ? `Bug report: the PO analyses it against requirements v${target.versions} and says whether it comes from the requirements or the code; then the team fixes it and QA re-checks every criterion.`
+          : `Change request: the PO starts from requirements v${target.versions} and the Developer from the current files. QA re-checks every criterion.`
+        : 'Bug reports and change requests need the PO, the Developer and QA in AI-powered mode (Team page).',
     );
     return finishComposer(state, ui, active);
   }

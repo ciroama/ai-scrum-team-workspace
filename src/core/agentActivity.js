@@ -61,6 +61,7 @@ export function describeTeam({ team, config, workflow, tasks, events }) {
       ...agent.profile,
       enabled,
       mode: config[agent.id]?.mode ?? 'scripted',
+      model: config[agent.id]?.model ?? null,
       supportsAi: Boolean(team.supportsAi?.(agent.id)),
       configUpdatedAt: config[agent.id]?.updatedAt ?? null,
       finishingTask: !enabled && running ? running.title : null,

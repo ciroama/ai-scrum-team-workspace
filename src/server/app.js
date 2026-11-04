@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../storage/database.js';
 import { Repository } from '../storage/repository.js';
@@ -13,7 +13,7 @@ import { TeamRoster } from '../agents/roster.js';
 import { AiSettings } from '../ai/aiSettings.js';
 import { PreviewError, PreviewService } from '../preview/previewService.js';
 import { computeAnalytics, parseDateFilter } from '../analytics/analytics.js';
-import { requestsCsv, statisticsCsv, tasksCsv } from '../analytics/export.js';
+import { concernsCsv, requestsCsv, statisticsCsv, tasksCsv } from '../analytics/export.js';
 import { AgentKind } from '../agents/agent.js';
 import { resolveInside } from '../actions/writeFile.js';
 
@@ -82,12 +82,14 @@ function statusFor(error) {
  * @param {number} [options.previewPort]  0 (default) picks a free port
  * @param {string} [options.claudeBinary]  the `claude` command (overridable for tests)
  */
-export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBinary }) {
+export function createApp({ dataDir: dataDirOption, team, gitBinary, previewPort = 0, claudeBinary }) {
+  // Absolute, wherever the server was started from: commands run inside each product's folder.
+  const dataDir = resolve(dataDirOption);
   const { db, legacyBackup } = openDatabase(join(dataDir, 'workspace.db'));
   const repository = new Repository(db);
   const aiSettings = new AiSettings({ repository, ...(claudeBinary ? { binary: claudeBinary } : {}) });
-  team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: () => aiSettings.client() });
-  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary });
+  team ??= new TeamRoster({ getMode: (agentId) => repository.getAgentMode(agentId), getClient: (agentId) => aiSettings.client(repository.getAgentModel(agentId)) });
+  const orchestrator = new Orchestrator({ repository, team, dataDir, gitBinary, modelOf: (agentId) => repository.getAgentModel(agentId) || aiSettings.model });
   orchestrator.init();
 
   /** Finds a workflow's product folder and the page the preview opens. */
@@ -137,7 +139,11 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       stages: STAGE_ORDER.map((id) => ({ id, title: STAGES[id].title, agent: STAGES[id].agent })),
       statusLabels: WORKFLOW_STATUS,
       requestLimits: REQUEST_LIMITS,
-      workflows: repository.listWorkflows({ limit: 500 }).map(({ state: _state, ...summary }) => summary),
+      workflows: repository.listWorkflows({ limit: 500 }).map(({ state: wfState, ...summary }) => ({
+        ...summary,
+        requestType: wfState?.requestType ?? (wfState?.base ? 'change' : null),
+        waitingFor: wfState?.waitingFor ?? null,
+      })),
       products: repository.listProducts(),
       focusWorkflowId: focus?.id ?? null,
       activeWorkflowId: repository.findActiveWorkflow()?.id ?? null,
@@ -167,6 +173,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
         workflowId: w.id,
         requestText: w.requestText,
         change: Boolean(w.state?.base),
+        requestType: w.state?.requestType ?? (w.state?.base ? 'change' : null),
         baseVersion: w.state?.base?.version ?? null,
         status: w.status,
         verified: w.verified,
@@ -180,6 +187,7 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
               acceptanceCriteria: w.state.spec.acceptanceCriteria.map(({ id, description }) => ({ id, description })),
               changes: w.state.spec.changes ?? null,
               assumptions: w.state.spec.assumptions ?? null,
+              bugOrigin: w.state.spec.bugOrigin ?? null,
               clarifications: w.state.spec.clarifications ?? null,
             }
           : null,
@@ -214,8 +222,8 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
       'POST',
       /^\/api\/workflows$/,
       async (req) => {
-        const { request, productId } = await readJsonBody(req);
-        const { workflow } = orchestrator.submit(request, { productId: productId || null });
+        const { request, productId, type } = await readJsonBody(req);
+        const { workflow } = orchestrator.submit(request, { productId: productId || null, type: productId ? type || null : null });
         return [201, { workflow }];
       },
     ],
@@ -226,13 +234,14 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
     ],
     [
       'GET',
-      /^\/api\/analytics\/export\/(statistics|requests|tasks)\.csv$/,
+      /^\/api\/analytics\/export\/(statistics|requests|concerns|tasks)\.csv$/,
       (req, [kind]) => {
         const filter = analyticsFilter(req);
         const source = repository.analyticsSource();
         const body = {
           statistics: () => statisticsCsv(source, filter, { agents: agentLabels() }),
           requests: () => requestsCsv(source, filter),
+          concerns: () => concernsCsv(source, filter),
           tasks: () => tasksCsv(source, filter, { agents: agentLabels() }),
         }[kind]();
         const day = new Date().toISOString().slice(0, 10);
@@ -284,15 +293,20 @@ export function createApp({ dataDir, team, gitBinary, previewPort = 0, claudeBin
         return { workflow: orchestrator.answer(id, answer).workflow };
       },
     ],
+    ['POST', /^\/api\/workflows\/([\w-]+)\/stop$/, (_req, [id]) => ({ workflow: orchestrator.stop(id).workflow })],
     ['POST', /^\/api\/workflows\/([\w-]+)\/cancel$/, (_req, [id]) => ({ workflow: orchestrator.cancel(id) })],
     [
       'PUT',
       /^\/api\/agents\/([\w-]+)$/,
       async (req, [agentId]) => {
         const body = await readJsonBody(req);
-        if (body.enabled === undefined && body.mode === undefined) throw new HttpError(400, 'Send "enabled" and/or "mode".');
+        if (body.enabled === undefined && body.mode === undefined && body.model === undefined) throw new HttpError(400, 'Send "enabled", "mode" and/or "model".');
         let changed = false;
-        if (body.mode !== undefined) changed = orchestrator.setAgentMode(agentId, body.mode, { modelName: aiSettings.model }).changed || changed;
+        if (body.model !== undefined) {
+          if (body.model !== '' && body.model !== null && !AiSettings.isModelName(body.model)) throw new HttpError(400, 'The model must be a Claude Code model name, e.g. sonnet, opus or haiku.');
+          changed = orchestrator.setAgentModel(agentId, body.model || null, { defaultModel: aiSettings.model }).changed || changed;
+        }
+        if (body.mode !== undefined) changed = orchestrator.setAgentMode(agentId, body.mode, { modelName: repository.getAgentModel(agentId) || aiSettings.model }).changed || changed;
         if (body.enabled !== undefined) changed = orchestrator.setAgentEnabled(agentId, body.enabled).changed || changed;
         return { changed };
       },

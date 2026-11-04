@@ -111,7 +111,7 @@ export function renderProjects(state, ui, actions) {
                   h(
                     'span',
                     null,
-                    h('span', { className: 'muted small', style: 'display:block' }, wf.id === product.id ? 'New product' : 'Change request'),
+                    h('span', { className: 'muted small', style: 'display:block' }, wf.id === product.id ? 'New product' : wf.requestType === 'bug' ? '🐞 Bug report' : 'Change request'),
                     h('span', { style: 'display:block' }, `“${wf.requestText}”`),
                     h('span', { className: 'muted small', style: 'display:block' }, `${dateTime(wf.createdAt)}${wf.finishedAt ? ` · took ${duration(new Date(wf.finishedAt) - new Date(wf.createdAt))}` : ''}`),
                   ),
@@ -182,7 +182,8 @@ export function renderRequirements(state, ui, actions) {
             h('span', { className: 'status-pill', dataset: { status: it.status } }, statusLabel(state, it.status)),
             h('span', { className: 'muted small' }, dateTime(it.createdAt)),
           ),
-          h('p', null, h('span', { className: 'muted' }, it.change ? `Change request (on version ${it.baseVersion}): ` : 'Original request: '), `“${it.requestText}”`),
+          h('p', null, h('span', { className: 'muted' }, it.change ? `${it.requestType === 'bug' ? '🐞 Bug report' : 'Change request'} (on version ${it.baseVersion}): ` : 'Original request: '), `“${it.requestText}”`),
+          it.spec && it.spec.bugOrigin ? h('p', { className: 'muted small' }, `The PO traced this bug to the ${it.spec.bugOrigin === 'requirements' ? 'requirements' : 'code (implementation)'}.`) : null,
           it.spec
             ? [
                 it.spec.changes ? h('div', null, h('p', { className: 'muted small' }, 'Changes'), it.spec.changes.length ? h('ul', null, it.spec.changes.map((c) => h('li', null, c))) : h('p', { className: 'muted small' }, 'The PO listed no changes.')) : null,

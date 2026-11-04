@@ -2,7 +2,7 @@
 // use the same records and the same filters as the page: the statistics as
 // shown, one row per request, and one row per agent task.
 
-import { computeAnalytics, selectWorkflows } from './analytics.js';
+import { computeAnalytics, rulesOf, selectWorkflows, setupOf } from './analytics.js';
 
 /**
  * One CSV cell. Text that a spreadsheet would run as a formula (starting
@@ -34,6 +34,19 @@ export function statisticsCsv(source, filter, catalogue) {
     ...['po', 'dev', 'qa'].flatMap((agent) =>
       data.process[agent].map((m) => ({ section: `Team process: ${{ po: 'PO', dev: 'Developer', qa: 'QA' }[agent]}`, metric: m.label, value: m.value, unit: m.unit, detail: m.detail, source: m.source, basis: m.basis })),
     ),
+    ...data.modelComparison.flatMap((g) => [
+      ['Requests', g.requests, 'count'],
+      ['Completed and verified', g.verifiedRate, 'fraction 0-1'],
+      ['PO questions per request', g.poQuestionsPerRequest, 'count'],
+      ['Developer and QA questions per request', g.teamQuestionsPerRequest, 'count'],
+      ['Defects per request', g.defectsPerRequest, 'count'],
+      ['PO rework per request', g.reworkPerRequest, 'count'],
+      ['Right first time', g.firstTimeRight, 'fraction 0-1'],
+      ['AI requests per request', g.aiRequestsPerRequest, 'count'],
+      ['Tokens per request', g.tokensPerRequest, 'count'],
+      ['Average completion time', g.averageCompletionMs, 'ms'],
+      ['Bugs you found later, per verified delivery', g.bugsPerDelivery, 'count'],
+    ].map(([metric, value, unit]) => ({ section: `Models: ${g.setup}`, metric, value: value == null ? null : Math.round(value * 100) / 100, unit, source: 'calculated', basis: 'Requests grouped by the models their AI requests really used (recorded ai.call events).' }))),
     ...data.outcomes.map((o) => ({ section: 'Workflow outcome', metric: o.label, value: o.value, unit: 'count', source: 'recorded', basis: 'Current status of each selected workflow.' })),
     ...data.agents.flatMap((a) => [
       { section: `Agent: ${a.label}`, metric: 'Tasks completed', value: a.tasksCompleted, unit: 'count', source: 'recorded' },
@@ -77,15 +90,22 @@ export function requestsCsv(source, filter) {
       lastRun,
       aiCalls,
       blocks,
+      setup: setupOf(w.id, source.tasks, source.events),
       corrections: eventsOf(w.id, 'handoff').filter((e) => e.from === 'qa' && e.to === 'dev').length,
       poRework: eventsOf(w.id, 'handoff').filter((e) => e.from === 'po' && e.to === 'dev' && e.status === 'failure').length,
     };
   });
   return toCsv(rows, [
     ['request id', (r) => r.w.id],
+    ['team rules', (r) => `v${rulesOf(r.w)}`],
+    ['PO model', (r) => r.setup.po],
+    ['Developer model', (r) => r.setup.dev],
+    ['QA model', (r) => r.setup.qa],
     ['product id', (r) => r.w.productId ?? r.w.id],
     ['product', (r) => r.product],
-    ['kind', (r) => (r.w.state?.base ? 'change request' : 'new product')],
+    ['kind', (r) => (r.w.state?.requestType === 'bug' ? 'bug report' : r.w.state?.base ? 'change request' : 'new product')],
+    ['bug origin', (r) => r.w.state?.spec?.bugOrigin ?? null],
+    ['about a QA-verified version', (r) => (r.w.state?.base ? Boolean(r.w.state.base.verified) : null)],
     ['request', (r) => r.w.requestText],
     ['submitted at', (r) => r.w.createdAt],
     ['finished at', (r) => r.w.finishedAt],
@@ -94,13 +114,24 @@ export function requestsCsv(source, filter) {
     ['verified by QA', (r) => r.w.verified],
     ['PO interruptions', (r) => eventsOf(r.w.id, 'po.clarification').length],
     ['PO questions', (r) => eventsOf(r.w.id, 'po.clarification').reduce((n, e) => n + (e.detail?.questions?.length || 1), 0)],
+    ['assumptions', (r) => (r.spec ? (r.spec.assumptions ?? []).length : null)],
+    ['assumptions from you', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy !== 'po').length : null)],
+    ['assumptions decided by the PO', (r) => (r.spec ? (r.spec.assumptions ?? []).filter((a) => a.decidedBy === 'po').length : null)],
+    ['PO went ahead without asking', (r) => (r.spec ? eventsOf(r.w.id, 'po.requirements').some((e) => e.detail?.whyNoQuestions) : null)],
     ['your answers', (r) => eventsOf(r.w.id, 'clarification.answered').length],
+    ['Developer questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'dev').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
+    ['QA questions', (r) => eventsOf(r.w.id, 'team.question').filter((e) => e.actor === 'qa').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
+    ['team questions answered by the PO', (r) => eventsOf(r.w.id, 'team.answer').reduce((n, e) => n + (e.detail?.answers?.length ?? 0), 0)],
+    ['team questions passed on to you', (r) => eventsOf(r.w.id, 'po.escalation').reduce((n, e) => n + (e.detail?.questions?.length ?? 0), 0)],
     ['requirements version', (r) => r.spec?.version ?? null],
     ['requirements', (r) => r.spec?.requirements.length ?? null],
     ['acceptance criteria', (r) => r.spec?.acceptanceCriteria.length ?? null],
     ['implementation attempts', (r) => r.w.state?.attempt ?? 0],
     ['corrections from QA', (r) => r.corrections],
     ['rework from the PO', (r) => r.poRework],
+    ['QA tests contested by the Developer', (r) => eventsOf(r.w.id, 'dev.dispute').length],
+    ['contested tests QA fixed', (r) => eventsOf(r.w.id, 'qa.dispute').filter((e) => e.detail?.decision === 'fixed').length],
+    ['requirements corrected by the PO after its review', (r) => eventsOf(r.w.id, 'po.revision').length],
     ['test runs', (r) => r.testRuns.length],
     ['tests in last run', (r) => r.lastRun?.tests ?? null],
     ['tests passed in last run', (r) => r.lastRun?.pass ?? null],
@@ -111,6 +142,40 @@ export function requestsCsv(source, filter) {
     ['AI input tokens', (r) => r.aiCalls.reduce((n, e) => n + (e.detail?.usage?.promptTokens ?? 0), 0)],
     ['AI output tokens', (r) => r.aiCalls.reduce((n, e) => n + (e.detail?.usage?.completionTokens ?? 0), 0)],
     ['AI models', (r) => [...new Set(r.aiCalls.map((e) => e.detail?.model).filter(Boolean))].join(' ')],
+  ]);
+}
+
+/**
+ * One row per concern QA raised about the requirements, with the PO's
+ * answer: the decision and the reason it gave in its final review. A
+ * concern raised on a delivery that went back to the Developer never
+ * reached a review, so it has no answer.
+ */
+export function concernsCsv(source, filter) {
+  const titles = new Map(computeAnalytics(source, {}, {}).projects.map((p) => [p.id, p.title]));
+  const workflows = new Map(selectWorkflows(source, filter).map((w) => [w.id, w]));
+  const concerns = source.events.filter((e) => e.type === 'qa.concern' && workflows.has(e.workflowId));
+  // A review answers the concerns of the delivery it reviewed: the latest
+  // matching concern raised before it that is still unanswered.
+  const answers = new Map();
+  for (const review of source.events) {
+    if (review.type !== 'po.review' || !workflows.has(review.workflowId)) continue;
+    for (const response of review.detail?.concernResponses ?? []) {
+      const raised = concerns.findLast((c) => c.workflowId === review.workflowId && c.id < review.id && !answers.has(c.id) && (c.detail?.concern ?? c.summary) === response.concern);
+      if (raised) answers.set(raised.id, { ...response, at: review.ts });
+    }
+  }
+  const rows = concerns.map((e) => ({ e, w: workflows.get(e.workflowId), concern: e.detail?.concern ?? e.summary, answer: answers.get(e.id) ?? null }));
+  return toCsv(rows, [
+    ['request id', (r) => r.w.id],
+    ['product', (r) => titles.get(r.w.productId ?? r.w.id)],
+    ['kind', (r) => (r.w.state?.requestType === 'bug' ? 'bug report' : r.w.state?.base ? 'change request' : 'new product')],
+    ['request', (r) => r.w.requestText],
+    ['raised at', (r) => r.e.ts],
+    ['QA concern', (r) => r.concern],
+    ['PO decision', (r) => (r.answer ? r.answer.decision : 'not answered')],
+    ['PO reason', (r) => r.answer?.reason ?? null],
+    ['answered at', (r) => r.answer?.at ?? null],
   ]);
 }
 

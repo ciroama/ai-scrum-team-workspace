@@ -42,12 +42,12 @@ export class ProductOwnerAgent extends ScriptedAgent {
       id: 'po',
       label: 'PO',
       title: 'Product Owner',
-      summary: 'Turns your request into requirements and acceptance criteria, and reviews the verified result.',
+      summary: 'Decides what is built and why: turns your request into requirements and acceptance criteria, and reviews the verified result.',
       responsibilities: [
-        'Analyses the request',
-        'Writes requirements and acceptance criteria',
-        'Asks for clarification when a request is unsupported or ambiguous',
-        'Reviews the outcome against QA evidence',
+        'Clarifies with you what is wanted, and owns the requirements',
+        'Writes acceptance criteria in your words, never how to build or test them',
+        'Answers the Developer\'s and QA\'s questions about what is wanted',
+        'Reviews the outcome against QA\'s evidence, without reading the code',
       ],
     });
   }
@@ -155,6 +155,17 @@ export class ProductOwnerAgent extends ScriptedAgent {
         ? `Accepted: all ${spec.acceptanceCriteria.length} acceptance criteria are met, verified by QA ` +
           `(${tests.pass} of ${tests.tests} automated tests passed).`
         : `Not accepted: acceptance criteria ${unmet.join(', ')} are not met according to QA's verification.`,
+    };
+  }
+
+  /**
+   * A scripted PO knows only its recipe, so it cannot judge a teammate's
+   * question: it passes every question on to the user.
+   */
+  answerTeam({ questions }) {
+    return {
+      answers: questions.map((_q, i) => ({ question: i + 1, answer: null, askUser: true, why: 'The scripted PO only knows its recipe and cannot judge this question.' })),
+      decidedBy: 'rule',
     };
   }
 }

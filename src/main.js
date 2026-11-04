@@ -14,6 +14,7 @@ if (major !== REQUIRED.major || minor < REQUIRED.minor) {
 }
 
 const { startServer } = await import('./server/app.js');
+const { stopAll } = await import('./actions/children.js');
 
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.WORKSPACE_DATA_DIR ?? 'data';
@@ -41,16 +42,19 @@ console.log(`Live Preview port: ${previewPort || 'chosen automatically'}`);
 console.log(`Data folder: ${dataDir} (SQLite database + generated products)`);
 if (app.legacyBackup) console.log(`The Milestone 1 database was kept as ${app.legacyBackup}.`);
 const modes = app.repository.getAgentConfig();
-const aiAgents = ['po', 'dev'].filter((id) => modes[id]?.mode === 'ai');
+const names = { po: 'PO', dev: 'Developer', qa: 'QA' };
+const aiAgents = ['po', 'dev', 'qa'].filter((id) => modes[id]?.mode === 'ai');
 console.log(
   aiAgents.length
-    ? `AI-powered agents: ${aiAgents.map((id) => (id === 'po' ? 'PO' : 'Developer')).join(', ')} (Claude Code, model ${app.aiSettings.model}). QA is scripted.`
+    ? `AI-powered agents: ${aiAgents.map((id) => names[id]).join(', ')} (Claude Code, default model ${app.aiSettings.model}).`
     : 'The PO, Developer and QA agents are scripted (rules and templates, no AI model). AI can be enabled on the Team page.',
 );
 console.log('Keep this window open while you use the dashboard. Press Ctrl+C to stop.');
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    // Claude Code requests and test runs stop with the server.
+    stopAll();
     await app.close();
     process.exit(0);
   });

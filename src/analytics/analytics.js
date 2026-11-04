@@ -85,7 +85,7 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
     { key: 'verified', label: 'Completed and verified by QA', value: verified.length, tone: 'good' },
     { key: 'completed_unverified', label: 'Completed, not verified', value: completed.length - verified.length, tone: 'neutral' },
     { key: 'blocked', label: 'Blocked (now)', value: byStatus('blocked').length, tone: 'warning' },
-    { key: 'needs_clarification', label: 'Needs clarification', value: byStatus('needs_clarification').length, tone: 'neutral' },
+    { key: 'needs_clarification', label: 'Waiting for you', value: byStatus('needs_clarification').length, tone: 'neutral' },
     { key: 'running', label: 'Running', value: byStatus('running').length, tone: 'neutral' },
     { key: 'interrupted', label: 'Interrupted', value: byStatus('interrupted').length, tone: 'neutral' },
     { key: 'cancelled', label: 'Cancelled', value: byStatus('cancelled').length, tone: 'neutral' },
@@ -117,6 +117,14 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const blocks = allBlocks.filter((e) => !e.detail?.cause || e.detail.cause === 'agent_disabled');
   const otherBlocks = allBlocks.filter((e) => e.detail?.cause && e.detail.cause !== 'agent_disabled');
   const aiCalls = events.filter((e) => e.type === 'ai.call');
+  // Coming back to a product: bug reports and change requests (chosen by you).
+  const typeOf = (w) => w.state?.requestType ?? (w.state?.base ? 'change' : null);
+  const bugReports = selected.filter((w) => typeOf(w) === 'bug');
+  const changeRequests = selected.filter((w) => typeOf(w) === 'change');
+  const escapedBugs = bugReports.filter((w) => w.state?.base?.verified);
+  const bugsFromRequirements = bugReports.filter((w) => w.state?.spec?.bugOrigin === 'requirements').length;
+  const bugsFromCode = bugReports.filter((w) => w.state?.spec?.bugOrigin === 'implementation').length;
+  const bugsUnknown = bugReports.length - bugsFromRequirements - bugsFromCode;
   // The PO stopping to ask you something: one event per round of questions.
   const poQuestionRounds = events.filter((e) => e.type === 'po.clarification');
   const poQuestions = sum(poQuestionRounds.map((e) => e.detail?.questions?.length || 1));
@@ -278,6 +286,28 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       basis: 'Recorded po.clarification events: each time the PO stopped and asked you before writing the requirements, because something was missing, unclear or not buildable. Questions are counted one by one when the PO asked several at once; answers are your recorded clarification.answered events.',
     },
     {
+      key: 'bugsReported',
+      group: 'overview',
+      label: 'Bugs you reported',
+      unit: 'count',
+      value: enough ? bugReports.length : null,
+      detail: enough
+        ? `${escapedBugs.length} after a delivery QA had verified · origin: ${bugsFromRequirements} requirements, ${bugsFromCode} code${bugsUnknown ? `, ${bugsUnknown} not analysed yet` : ''}`
+        : null,
+      source: SOURCE.recorded,
+      basis: 'Requests you sent as "Bug" about a product: something did not work as agreed or as expected. "After a delivery QA had verified" counts bugs that got past the whole team; the origin is the PO\'s analysis of each bug report.',
+    },
+    {
+      key: 'changeRequests',
+      group: 'overview',
+      label: 'Change requests',
+      unit: 'count',
+      value: enough ? changeRequests.length : null,
+      detail: enough ? `you came back to a product ${bugReports.length + changeRequests.length} time${bugReports.length + changeRequests.length === 1 ? '' : 's'} in all` : null,
+      source: SOURCE.recorded,
+      basis: 'Requests you sent as "Change request" about a product: something new or different. Earlier change requests without a type count here.',
+    },
+    {
       key: 'aiCalls',
       group: 'overview',
       label: 'AI requests',
@@ -299,7 +329,20 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
   const concerns = events.filter((e) => e.type === 'qa.concern');
   const reviews = events.filter((e) => e.type === 'po.review');
   const devTasks = tasks.filter((t) => t.agentId === 'dev' && t.status === 'completed' && (t.stage === 'implementation' || t.stage === 'correction'));
-  const poDecided = sum(events.filter((e) => e.type === 'po.requirements').map((e) => (e.detail?.assumptions ?? []).filter((a) => a.decidedBy === 'po').length));
+  // The agreed requirements of each request: the last version the PO wrote.
+  const lastRequirements = [...new Map(events.filter((e) => e.type === 'po.requirements').map((e) => [e.workflowId, e])).values()];
+  const assumptions = lastRequirements.flatMap((e) => e.detail?.assumptions ?? []);
+  // Questions the Developer and QA asked the PO, and what became of them.
+  const teamAsked = (from) => events.filter((e) => e.type === 'team.question' && e.actor === from);
+  const teamAnswered = (to) => sum(events.filter((e) => e.type === 'team.answer' && e.to === to).map((e) => e.detail?.answers?.length ?? 0));
+  const teamPassedOn = (from) => sum(events.filter((e) => e.type === 'po.escalation' && e.detail?.for === from).map((e) => e.detail?.questions?.length ?? 0));
+  const disputeAnswers = events.filter((e) => e.type === 'qa.dispute');
+  const askedMetric = (key, who, from) => {
+    const rounds = teamAsked(from);
+    const n = sum(rounds.map((e) => e.detail?.questions?.length ?? 0));
+    return metric(key, 'Questions it asked the PO', n, rounds.length ? `${rounds.length} time${rounds.length === 1 ? '' : 's'} it stopped · ${teamAnswered(from)} answered by the PO · ${teamPassedOn(from)} passed on to you` : null, SOURCE.recorded, `Recorded team.question events: the ${who} stopped before doing its work to ask the PO (team rules v2 and later).`);
+  };
+  const poDecided = assumptions.filter((a) => a.decidedBy === 'po').length;
   const verifiedWorkflows = [...new Set(verdicts.map((e) => e.workflowId))];
   const firstTimeRight = verifiedWorkflows.filter((id) => {
     const first = verdicts.find((e) => e.workflowId === id);
@@ -321,18 +364,26 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('poInterruptionsCount', 'Times it stopped to ask you', poQuestionRounds.length, `in ${askedIn} of ${total} request${total === 1 ? '' : 's'}`, SOURCE.recorded, 'Recorded po.clarification events: each one is the PO stopping the work to ask you before writing the requirements.'),
       metric('poQuestionsCount', 'Questions asked', poQuestions, poQuestionRounds.length ? `${(poQuestions / poQuestionRounds.length).toFixed(1)} per interruption` : null, SOURCE.recorded, 'Every question counts, also when the PO asked several in one message (the questions recorded on each po.clarification event).'),
       metric('poAnswers', 'Answers it needed from you', answers.length, null, SOURCE.recorded, 'Recorded clarification.answered events.'),
+      metric('poNoQuestions', 'Times it went ahead without asking', events.filter((e) => e.type === 'po.requirements' && e.detail?.whyNoQuestions).length, null, SOURCE.recorded, 'Requirements the PO wrote without asking you anything, giving its reason (recorded on po.requirements events since this was added).'),
+      metric('poAssumptions', 'Assumptions written down', assumptions.length, `${assumptions.length - poDecided} from your answers · ${poDecided} decided by the PO`, SOURCE.recorded, 'Assumptions the PO wrote into the agreed requirements (recorded po.requirements events), each marked as coming from you or decided by the PO.'),
       metric('poDecided', 'Details you left to the PO', poDecided, null, SOURCE.recorded, 'Assumptions marked "decided by the PO" in the agreed requirements, after you told the PO to decide.'),
       metric('poGuessesStopped', 'Guesses stopped', guessesStopped, 'it decided something you never said and had to ask instead', SOURCE.recorded, 'PO answers refused because, before you had answered anything, they decided a detail you never gave (or skipped the questions without a reason). The PO then had to ask.'),
       metric('poRequirementGaps', 'Requirement gaps found later', fromRequirements, 'by QA\'s own tests or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the requirements: failing QA tests of things you asked that the requirements never stated, and PO rejection reasons marked "requirements".'),
+      metric('poBugsRequirements', 'Your bugs traced to its requirements', bugsFromRequirements, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the requirements: they missed or misstated what you wanted.'),
       metric('poConcerns', 'QA concerns it agreed with', concernAnswers.filter((r) => r.decision === 'agree').length, concernAnswers.length ? `of ${concernAnswers.length} answered · ${concernAnswers.filter((r) => r.decision === 'disagree').length} dismissed` : null, SOURCE.recorded, 'The PO\'s explicit answer to each concern QA raised, recorded with its final review.'),
+      metric('poRevised', 'Requirements it corrected after its review', events.filter((e) => e.type === 'po.revision').length, null, SOURCE.recorded, 'Recorded po.revision events: the PO\'s final review found its own requirements wrong (for example against your answers), and the PO corrected them before the Developer changed the product.'),
       metric('poRejected', 'Verified work it sent back', poRework.length, `${reviews.filter((e) => e.status === 'success').length} accepted`, SOURCE.recorded, 'PO → Developer rework handoffs: the PO rejected a product that QA had verified, and said why.'),
+      metric('poTeamAnswered', "Team questions it answered", teamAnswered('dev') + teamAnswered('qa'), `${teamPassedOn('dev') + teamPassedOn('qa')} passed on to you`, SOURCE.recorded, 'Questions from the Developer and QA that the PO answered itself (recorded team.answer events), and those it passed on to you (po.escalation events).'),
       metric('poRefused', 'AI answers refused by its rules', refused('po'), null, SOURCE.recorded, refusedBasis('PO')),
     ],
     dev: [
       metric('devDeliveries', 'Implementations delivered', devTasks.length, 'first builds and corrections', SOURCE.recorded, 'Completed Developer tasks in the implementation and correction stages.'),
       metric('devCaughtByQa', 'Caught by QA', failedVerdicts.length, devTasks.length ? `${failedVerdicts.length} of ${devTasks.length} deliveries failed verification` : null, SOURCE.recorded, 'Recorded qa.verdict events with a failing verdict: each one is a delivery in which QA found at least one defect.'),
       metric('devSentBackByPo', 'Sent back by the PO', poRework.length, null, SOURCE.recorded, 'PO → Developer rework handoffs after QA had verified the delivery.'),
+      metric('devBugsCode', 'Your bugs traced to its code', bugsFromCode, bugReports.length ? `of ${bugReports.length} bug${bugReports.length === 1 ? '' : 's'} you reported` : null, SOURCE.recorded, 'Bug reports the PO analysed as coming from the implementation: the requirements were right, the code was wrong.'),
       metric('devCodeDefects', 'Code defects found', fromCode, 'by QA or by the PO\'s review', SOURCE.recorded, 'Problems whose origin is the implementation: failed acceptance checks, failing QA tests of things the requirements state, and PO rejection reasons marked "implementation".'),
+      askedMetric('devQuestions', 'Developer', 'dev'),
+      metric('devDisputes', 'QA tests it contested', events.filter((e) => e.type === 'dev.dispute').length, disputeAnswers.length ? `${disputeAnswers.filter((e) => e.detail?.decision === 'fixed').length} fixed by QA · ${disputeAnswers.filter((e) => e.detail?.decision === 'kept').length} kept` : null, SOURCE.recorded, 'Recorded dev.dispute events: the Developer argued that one of QA\'s failing tests was wrong (team rules v6 and later); QA\'s answers are qa.dispute events.'),
       metric('devRefused', 'AI answers refused by its rules', refused('dev'), null, SOURCE.recorded, refusedBasis('Developer')),
       metric('devFirstTimeRight', 'Right first time', verifiedWorkflows.length ? firstTimeRight.length / verifiedWorkflows.length : null, verifiedWorkflows.length ? `${firstTimeRight.length} of ${verifiedWorkflows.length} requests` : null, SOURCE.calculated, 'Requests whose first delivery passed QA and was not sent back by the PO, out of the requests QA verified at least once.', 'percent'),
     ],
@@ -340,14 +391,21 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       metric('qaVerifications', 'Verifications run', verdicts.length, null, SOURCE.recorded, 'Recorded qa.verdict events: one per verification of a delivery.'),
       metric('qaDefects', 'Defects found', defectsFound.length, `${defectsFound.length - fromOwnTests.length} by the acceptance checks · ${fromOwnTests.length} by its own tests · ${defectsFound.filter((e) => e.detail?.origin === 'requirements').length} in the requirements`, SOURCE.recorded, 'Recorded defect.reported events. "Its own tests" are the tests an AI-powered QA wrote from your request.'),
       metric('qaConcerns', 'Requirement concerns raised', concerns.length, null, SOURCE.recorded, 'Recorded qa.concern events: the requirements may not match your request (AI-powered QA only).'),
+      metric('qaEscaped', 'Bugs that got past it', escapedBugs.length, 'you found them after QA had verified the delivery', SOURCE.recorded, 'Bug reports about a product version QA had verified: problems none of the automated checks caught.'),
       metric('qaMissed', 'Passed by QA, rejected by the PO', poRework.length, null, SOURCE.recorded, 'Deliveries QA verified that the PO then rejected: problems the tests did not catch, according to the PO.'),
+      askedMetric('qaQuestions', 'QA', 'qa'),
+      metric('qaTestsFixed', 'Own tests it fixed after an objection', disputeAnswers.filter((e) => e.detail?.decision === 'fixed').length, disputeAnswers.length ? `of ${disputeAnswers.length} contested` : null, SOURCE.recorded, 'Recorded qa.dispute events with decision "fixed": the Developer contested the test and QA agreed it was wrong.'),
       metric('qaRefused', 'AI answers refused by its rules', refused('qa'), null, SOURCE.recorded, refusedBasis('QA')),
     ],
   };
 
+  // ---- Compare models: requests grouped by the models the agents really used ----
+  const modelComparison = compareModels(selected, tasks, events, source.workflows);
+
   return {
     filter: { projectId, from, to },
     process,
+    modelComparison,
     projects,
     empty: !enough,
     kpis,
@@ -366,6 +424,76 @@ export function computeAnalytics(source, filter = {}, { agents = [] } = {}) {
       'Workflows from Milestone 1 (kept in data/workspace.v1.db) are not included.',
     ],
   };
+}
+
+/** "claude-sonnet-5-5" -> "sonnet 5.5"; other names are kept as they are. */
+export function shortModel(model) {
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(model ?? '');
+  return m ? `${m[1]} ${m[2]}.${m[3]}` : model;
+}
+
+/**
+ * The setup a request really ran with: for each agent, the model(s) its
+ * recorded AI requests used, "scripted" if it worked without AI, or "—".
+ */
+/** The version of the team's rules a request ran under (1 before versions were recorded). */
+export const rulesOf = (workflow) => workflow.state?.rules?.version ?? 1;
+
+export function setupOf(workflowId, tasks, events) {
+  const setup = {};
+  for (const agentId of ['po', 'dev', 'qa']) {
+    const calls = events.filter((e) => e.type === 'ai.call' && e.workflowId === workflowId && e.actor === agentId && e.detail?.model);
+    // The model that really answered: a failed call (e.g. a timeout) only knows the name it was asked for.
+    const answered = calls.filter((e) => e.status === 'success');
+    const models = [...new Set((answered.length ? answered : calls).map((e) => shortModel(e.detail.model)))];
+    const worked = tasks.some((t) => t.workflowId === workflowId && t.agentId === agentId);
+    setup[agentId] = models.length ? models.join(' + ') : worked ? 'scripted' : '—';
+  }
+  return setup;
+}
+
+/** Process numbers per team setup, so different models can be compared on the same kind of work. */
+function compareModels(workflows, tasks, events, allWorkflows = workflows) {
+  const groups = new Map();
+  for (const w of workflows) {
+    const setup = setupOf(w.id, tasks, events);
+    const rules = rulesOf(w);
+    const key = `Rules v${rules} · PO: ${setup.po} · Developer: ${setup.dev} · QA: ${setup.qa}`;
+    if (!groups.has(key)) groups.set(key, { key, setup, rules, workflows: [] });
+    groups.get(key).workflows.push(w);
+  }
+  return [...groups.values()].map(({ key, setup, rules, workflows: list }) => {
+    const ids = new Set(list.map((w) => w.id));
+    const of = (type) => events.filter((e) => e.type === type && ids.has(e.workflowId));
+    const n = list.length;
+    const verdicts = of('qa.verdict');
+    const verifiedOnce = [...new Set(verdicts.map((e) => e.workflowId))];
+    const rework = of('handoff').filter((e) => e.from === 'po' && e.to === 'dev' && e.status === 'failure');
+    const firstTimeRight = verifiedOnce.filter((id) => verdicts.find((e) => e.workflowId === id).status === 'success' && !rework.some((e) => e.workflowId === id));
+    const calls = of('ai.call');
+    const delivered = list.filter((w) => w.status === 'completed' || w.status === 'failed');
+    const verified = list.filter((w) => w.status === 'completed' && w.verified);
+    const times = verified.map((w) => durationMs(w.createdAt, w.finishedAt)).filter((ms) => ms != null && ms >= 0);
+    const per = (value) => (n ? value / n : null);
+    // Bugs you later reported about versions this setup delivered and QA verified.
+    const escaped = allWorkflows.filter((b) => b.state?.requestType === 'bug' && ids.has(b.state?.base?.workflowId) && b.state?.base?.verified);
+    return {
+      setup: key,
+      rules,
+      models: setup,
+      teamQuestionsPerRequest: per(sum(of('team.question').map((e) => e.detail?.questions?.length ?? 0))),
+      requests: n,
+      verifiedRate: delivered.length ? verified.length / delivered.length : null,
+      poQuestionsPerRequest: per(sum(of('po.clarification').map((e) => e.detail?.questions?.length || 1))),
+      defectsPerRequest: per(of('defect.reported').length),
+      reworkPerRequest: per(rework.length),
+      firstTimeRight: verifiedOnce.length ? firstTimeRight.length / verifiedOnce.length : null,
+      aiRequestsPerRequest: per(calls.length),
+      tokensPerRequest: per(sum(calls.map((c) => (c.detail?.usage?.promptTokens ?? 0) + (c.detail?.usage?.completionTokens ?? 0)))),
+      averageCompletionMs: mean(times),
+      bugsPerDelivery: verified.length ? escaped.length / verified.length : null,
+    };
+  });
 }
 
 function formatDuration(ms) {

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_config (
@@ -92,6 +92,8 @@ function migrate(db) {
   const agentColumns = db.prepare('PRAGMA table_info(agent_config)').all().map((c) => c.name);
   // v3: how each agent decides: 'scripted' (rules) or 'ai' (model-backed).
   if (!agentColumns.includes('mode')) db.exec(`ALTER TABLE agent_config ADD COLUMN mode TEXT NOT NULL DEFAULT 'scripted'`);
+  // v5: the model an AI-powered agent uses; NULL means the workspace default.
+  if (!agentColumns.includes('model')) db.exec('ALTER TABLE agent_config ADD COLUMN model TEXT');
 
   // v4: workflows belong to a product. A product is identified by the id of
   // its first workflow, whose folder holds the product files, so earlier

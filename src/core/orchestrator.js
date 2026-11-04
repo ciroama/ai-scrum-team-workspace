@@ -1,11 +1,12 @@
 import { readFile, readdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { resolveInside, writeFile } from '../actions/writeFile.js';
 import { runCommand } from '../actions/runCommand.js';
 import { parseTap } from '../actions/tapParser.js';
 import { commitAll, detectGit } from '../actions/git.js';
+import { stopAll } from '../actions/children.js';
 import { RECIPES } from '../recipes/index.js';
 import { MAX_IMPLEMENTATION_ATTEMPTS, STAGES } from './stages.js';
 
@@ -14,6 +15,27 @@ export class ConflictError extends Error {}
 export class NotFoundError extends Error {}
 
 export const REQUEST_LIMITS = { min: 3, max: 2000 };
+
+/**
+ * Version of the team's working rules, recorded on every request so that
+ * experiments run under different rules can be compared.
+ * 1: the Developer and QA could not ask questions; the PO read the code in its review.
+ * 2: the Developer and QA may ask the PO (who answers or passes the question
+ *    on to the user); the PO never reads the code.
+ * 3: as 2, and the PO writes its acceptance criteria in words: QA decides
+ *    how to test each one.
+ * 4: as 3, and a product with behaviour keeps its rules in logic.js, which
+ *    loads without a browser: QA tests the behaviour through it.
+ * 5: as 4, and the PO's final review sees the user's answers; when the PO
+ *    finds its own requirements wrong, it corrects them before any rework
+ *    (the Developer never changes the requirements).
+ * 6: as 5, and the Developer may contest a QA test it believes is wrong: QA
+ *    must fix it or explain why it is right, and the PO sees the discussion.
+ */
+export const TEAM_RULES_VERSION = 6;
+
+/** How many times the PO may correct its own requirements in one request. */
+const MAX_REVISIONS = 2;
 const OUTPUT_LIMIT = 20_000;
 const MAX_FILE_PREVIEW = 200_000;
 
@@ -41,6 +63,7 @@ const STAGE_CATEGORY = {
   correction: 'correction',
   verification: 'test',
   review: 'review',
+  consultation: 'analysis',
 };
 
 /**
@@ -60,15 +83,20 @@ export class Orchestrator {
    * @param {string} [deps.gitBinary]
    * @param {number} [deps.commandTimeoutMs]
    */
-  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000 }) {
+  constructor({ repository, team, dataDir, recipes = RECIPES, gitBinary = 'git', commandTimeoutMs = 60_000, modelOf = () => null }) {
+    /** The model each agent would use if AI-powered (for the record of each request). */
+    this.modelOf = modelOf;
     this.repository = repository;
     this.team = team;
-    this.dataDir = dataDir;
+    // Absolute: commands run inside the product folder, where a relative path would point somewhere else.
+    this.dataDir = resolve(dataDir);
     this.recipes = recipes;
     this.gitBinary = gitBinary;
     this.commandTimeoutMs = commandTimeoutMs;
     /** @type {{ workflowId: string, promise: Promise<object> } | null} */
     this.current = null;
+    /** The workflow the user asked to stop, while its current step winds down. */
+    this.stopping = null;
     this.gitStatus = null;
     this.gitNoticeSent = new Set();
   }
@@ -110,7 +138,9 @@ export class Orchestrator {
   baseOf(productId) {
     const versions = this.repository.listProductWorkflows(productId).filter((w) => w.state?.spec);
     const latest = versions.at(-1);
-    return latest ? { workflowId: latest.id, version: latest.state.spec.version ?? versions.length, spec: latest.state.spec } : null;
+    return latest
+      ? { workflowId: latest.id, version: latest.state.spec.version ?? versions.length, spec: latest.state.spec, status: latest.status, verified: latest.verified }
+      : null;
   }
 
   label(actor) {
@@ -128,7 +158,11 @@ export class Orchestrator {
    * @param {{ productId?: string | null }} [options]
    * @returns {{ workflow: object, done: Promise<object> }}
    */
-  submit(requestText, { productId = null } = {}) {
+  submit(requestText, { productId = null, type = null } = {}) {
+    // What brings the user back to a product: a bug (it does not work as
+    // agreed) or a change request (something new or different).
+    if (type != null && type !== 'bug' && type !== 'change') throw new ValidationError('"type" must be "bug" or "change".');
+    if (type != null && productId == null) throw new ValidationError('A bug report or change request needs the product it is about.');
     if (typeof requestText !== 'string' || requestText.trim() === '') {
       throw new ValidationError('Please describe what you would like to build.');
     }
@@ -165,24 +199,36 @@ export class Orchestrator {
       stage: 'analysis',
       productId,
       title: base ? base.spec.title : 'New request',
-      state: base ? { base } : {},
+      state: { ...(base ? { base, requestType: type ?? 'change' } : {}), rules: { version: TEAM_RULES_VERSION } },
     });
+    const requestType = base ? type ?? 'change' : null;
     const config = this.repository.getAgentConfig();
-    const team = [...this.team.values()].map((a) => ({ id: a.id, label: a.label, kind: a.kind, enabled: config[a.id]?.enabled ?? false }));
+    const team = [...this.team.values()].map((a) => ({
+      id: a.id,
+      label: a.label,
+      kind: a.kind,
+      enabled: config[a.id]?.enabled ?? false,
+      model: a.kind === 'ai' ? this.modelOf(a.id) : null,
+    }));
 
     this.#event(workflow.id, {
       type: 'request.submitted',
       category: 'request',
       actor: 'user',
       actorKind: 'human',
-      summary: base ? `Change request for "${base.spec.title}" (requirements v${base.version}): "${text}"` : `Requirement submitted: "${text}"`,
-      detail: { requestText: text, ...(base ? { productId, baseVersion: base.version, baseWorkflowId: base.workflowId } : {}) },
+      summary: base
+        ? `${requestType === 'bug' ? 'Bug report' : 'Change request'} for "${base.spec.title}" (requirements v${base.version}): "${text}"`
+        : `Requirement submitted: "${text}"`,
+      detail: {
+        requestText: text,
+        ...(base ? { productId, requestType, baseVersion: base.version, baseWorkflowId: base.workflowId, baseVerified: base.verified } : {}),
+      },
     });
     this.#event(workflow.id, {
       type: 'workflow.created',
       category: 'workflow',
       summary: `Workflow created. Team availability: ${team.map((a) => `${a.label} ${a.enabled ? 'enabled' : 'disabled'}`).join(', ')}.`,
-      detail: { team, productDir: this.productDir(workflow.id) },
+      detail: { team, productDir: this.productDir(workflow.id), rules: { version: TEAM_RULES_VERSION } },
     });
 
     return { workflow: this.repository.getWorkflow(workflow.id), done: this.#start(workflow.id) };
@@ -197,35 +243,86 @@ export class Orchestrator {
     const workflow = this.repository.getWorkflow(workflowId);
     if (!workflow) throw new NotFoundError('Workflow not found');
     if (workflow.status !== 'needs_clarification') {
-      throw new ConflictError('The PO is not waiting for an answer on this request.');
+      throw new ConflictError('The team is not waiting for an answer on this request.');
     }
-    if (typeof answerText !== 'string' || answerText.trim().length < 1) throw new ValidationError('Please write your answer to the PO.');
+    if (typeof answerText !== 'string' || answerText.trim().length < 1) throw new ValidationError('Please write your answer.');
     const text = answerText.trim();
     if (text.length > REQUEST_LIMITS.max) throw new ValidationError(`The answer is too long (${text.length} characters). Please keep it under ${REQUEST_LIMITS.max} characters.`);
-    const active = this.repository.findActiveWorkflow();
-    if (active || this.current) {
-      throw new ConflictError(`"${(active ?? this.repository.getWorkflow(this.current.workflowId)).title}" is in progress. This workspace runs one workflow at a time.`);
+    this.#assertIdle();
+    const state = workflow.state;
+    const user = { actor: 'user', actorKind: 'human', from: 'user' };
+
+    if (state.waitingFor === 'team') {
+      // A question the PO passed on: the answer goes to the teammate who asked.
+      const pending = state.teamQuestions;
+      const question = pending.escalated.map((q) => q.question).join('\n');
+      this.#event(workflowId, {
+        ...user,
+        type: 'team.answered',
+        category: 'request',
+        to: pending.from,
+        summary: `Answer to the ${pending.from === 'dev' ? 'Developer' : 'QA'}: "${text}"`,
+        detail: { answer: text, for: pending.from, questions: pending.escalated.map((q) => q.question) },
+      });
+      this.repository.updateWorkflow(workflowId, {
+        status: 'running',
+        stage: pending.returnStage,
+        finishedAt: null,
+        state: { ...state, waitingFor: null, teamQuestions: null, teamClarifications: [...(state.teamClarifications ?? []), { from: pending.from, question, answer: text, answeredBy: 'user' }] },
+      });
+      return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
     }
 
-    const question = workflow.state.clarification?.message ?? null;
-    const dialogue = [...(workflow.state.dialogue ?? []), { question, answer: text }];
-    this.#event(workflowId, {
-      type: 'clarification.answered',
-      category: 'request',
-      actor: 'user',
-      actorKind: 'human',
-      from: 'user',
-      to: 'po',
-      summary: `Answer to the PO: "${text}"`,
-      detail: { answer: text, question, round: dialogue.length },
-    });
+    const question = state.clarification?.message ?? null;
+    const dialogue = [...(state.dialogue ?? []), { question, answer: text }];
+    this.#event(workflowId, { ...user, type: 'clarification.answered', category: 'request', to: 'po', summary: `Answer to the PO: "${text}"`, detail: { answer: text, question, round: dialogue.length } });
     this.repository.updateWorkflow(workflowId, {
       status: 'running',
       stage: 'analysis',
       finishedAt: null,
-      state: { ...workflow.state, dialogue, clarification: null },
+      state: { ...state, dialogue, clarification: null, waitingFor: null },
     });
     return { workflow: this.repository.getWorkflow(workflowId), done: this.#start(workflowId) };
+  }
+
+  /**
+   * Stops the running workflow now: the agent's Claude Code request or test
+   * run is ended, and the workflow becomes Interrupted. Resume runs the
+   * stopped stage again; Cancel ends it. Earlier work is kept.
+   * @returns {{ workflow: object, done: Promise<object> }}
+   */
+  stop(workflowId) {
+    const workflow = this.repository.getWorkflow(workflowId);
+    if (!workflow) throw new NotFoundError('Workflow not found');
+    if (workflow.status !== 'running' || this.current?.workflowId !== workflowId) {
+      throw new ConflictError('Only a running workflow can be stopped.');
+    }
+    this.stopping = workflowId;
+    stopAll();
+    return { workflow, done: this.current.promise };
+  }
+
+  /** The stage that was running when the user stopped the workflow. */
+  #stopped(workflow, stage, agent) {
+    this.stopping = null;
+    this.repository.updateWorkflow(workflow.id, { status: 'interrupted', verified: false });
+    this.#event(workflow.id, {
+      type: 'workflow.stopped',
+      category: 'workflow',
+      actor: 'user',
+      actorKind: 'human',
+      status: 'warning',
+      summary: `You stopped the workflow during ${stage.title} (${agent.label} was working). Resume runs this stage again; earlier work is kept. Or cancel the workflow.`,
+      detail: { stage: stage.id, agentId: agent.id },
+    });
+  }
+
+  /** One workflow at a time: refuses to continue a request while another runs. */
+  #assertIdle() {
+    const active = this.repository.findActiveWorkflow();
+    if (active || this.current) {
+      throw new ConflictError(`"${(active ?? this.repository.getWorkflow(this.current.workflowId)).title}" is in progress. This workspace runs one workflow at a time.`);
+    }
   }
 
   /** Continues a blocked or interrupted workflow from its saved stage. */
@@ -363,6 +460,29 @@ export class Orchestrator {
     return { changed: true };
   }
 
+  /**
+   * Chooses the model an AI-powered agent uses (null: the workspace default).
+   * Like the other settings, it applies to the next assignment.
+   * @returns {{ changed: boolean }}
+   */
+  setAgentModel(agentId, model, { defaultModel } = {}) {
+    if (!this.team.has(agentId)) throw new NotFoundError(`Unknown agent "${agentId}"`);
+    if (!this.team.supportsAi?.(agentId)) throw new ValidationError(`${this.label(agentId)} has no AI-powered version in this workspace.`);
+    if (this.repository.getAgentModel(agentId) === (model || null)) return { changed: false };
+    this.repository.setAgentModel(agentId, model);
+    const active = this.repository.findActiveWorkflow();
+    this.#event(active?.id ?? null, {
+      type: 'agent.model',
+      category: 'config',
+      actor: 'user',
+      actorKind: 'human',
+      status: 'info',
+      summary: `${this.label(agentId)} now uses ${model ? `the model "${model}"` : `the workspace default model${defaultModel ? ` ("${defaultModel}")` : ''}`} when AI-powered.`,
+      detail: { agentId, model: model || null, defaultModel: defaultModel ?? null },
+    });
+    return { changed: true };
+  }
+
   // ---- read models ---------------------------------------------------------
 
   /** Files in a workflow's product folder (excluding .git), read from disk. */
@@ -409,8 +529,9 @@ export class Orchestrator {
         if (workflow.status !== 'running') return workflow;
         const stage = STAGES[workflow.stage];
         const agent = this.team.get(stage.agent);
+        if (this.stopping === workflowId) this.#stopped(workflow, stage, agent);
         // Availability is checked before every assignment.
-        if (!this.repository.isAgentEnabled(agent.id)) this.#block(workflow, stage, agent);
+        else if (!this.repository.isAgentEnabled(agent.id)) this.#block(workflow, stage, agent);
         else await this.#runStage(workflow, stage, agent);
       }
     } catch (error) {
@@ -502,11 +623,23 @@ export class Orchestrator {
         correction: () => this.#implementation(ctx),
         verification: () => this.#verification(ctx),
         review: () => this.#review(ctx),
+        consultation: () => this.#consultation(ctx),
       }[stage.id];
       const { output, update } = await handler();
+      if (this.stopping === workflow.id) {
+        // Stopped while the step was finishing: its result is not used.
+        this.repository.finishTask(task.id, { status: 'interrupted', error: 'Stopped by you' });
+        this.#stopped(workflow, stage, agent);
+        return;
+      }
       this.repository.finishTask(task.id, { status: 'completed', output });
       this.repository.updateWorkflow(workflow.id, update);
     } catch (error) {
+      if (this.stopping === workflow.id) {
+        this.repository.finishTask(task.id, { status: 'interrupted', error: 'Stopped by you' });
+        this.#stopped(workflow, stage, agent);
+        return;
+      }
       this.repository.finishTask(task.id, { status: 'failed', error: error.message });
       this.#recordAiCalls(ctx, error.aiCalls);
       if (error.blocking) {
@@ -530,7 +663,16 @@ export class Orchestrator {
     const { workflow, agent, say } = ctx;
     const base = workflow.state.base ?? null;
     const dialogue = workflow.state.dialogue ?? [];
-    const result = await agent.analyse({ requestText: workflow.requestText, recipes: this.recipes, current: base, dialogue });
+    // A revision: the PO's own review found its requirements wrong, and it corrects them.
+    const revision = workflow.state.revision ?? null;
+    const result = await agent.analyse({
+      requestText: workflow.requestText,
+      recipes: this.recipes,
+      current: revision ? { spec: revision.previousSpec, version: revision.previousSpec.version ?? 1 } : base,
+      dialogue,
+      requestType: workflow.state.requestType ?? null,
+      revision: revision?.reasons ?? null,
+    });
     this.#recordAiCalls(ctx, result.aiCalls);
 
     if (result.status === 'needs_clarification') {
@@ -554,12 +696,18 @@ export class Orchestrator {
           status: 'needs_clarification',
           title: base ? base.spec.title : 'Request needs clarification',
           finishedAt: now(),
-          state: { ...workflow.state, clarification: { reason: result.reason, message: result.message, supported: result.supported } },
+          state: { ...workflow.state, waitingFor: 'po', clarification: { reason: result.reason, message: result.message, supported: result.supported } },
         },
       };
     }
 
-    const { spec } = result;
+    let { spec } = result;
+    if (revision) {
+      // A corrected version of the same request: it keeps what kind of request it is.
+      const { requestType: _type, bugOrigin: _origin, ...rest } = spec;
+      const previous = revision.previousSpec;
+      spec = { ...rest, ...(previous.requestType ? { requestType: previous.requestType } : {}), ...(previous.bugOrigin ? { bugOrigin: previous.bugOrigin } : {}), correctedAfterReview: true };
+    }
     await this.#writeFiles(ctx, [result.document]);
     say({
       type: 'po.requirements',
@@ -571,19 +719,18 @@ export class Orchestrator {
         version: spec.version,
         changes: spec.changes ?? null,
         assumptions: spec.assumptions ?? null,
+        bugOrigin: spec.bugOrigin ?? null,
+        whyNoQuestions: spec.whyNoQuestions ?? null,
       },
     });
-    say({
-      type: 'handoff',
-      category: 'handoff',
-      from: agent.id,
-      to: 'dev',
-      summary: result.handoffMessage,
-      detail: { references: [result.document.path, ...spec.acceptanceCriteria.map((c) => c.id)] },
-    });
+    const handoff = { message: result.handoffMessage, references: [result.document.path, ...spec.acceptanceCriteria.map((c) => c.id)] };
+    say({ type: 'handoff', category: 'handoff', from: agent.id, to: 'dev', summary: handoff.message, detail: { references: handoff.references } });
     return {
       output: { summary: result.summary, recipeId: spec.recipeId },
-      update: { recipeId: spec.recipeId, title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, attempt: 0 } },
+      update: revision
+        ? // The Developer changes the existing product to the corrected requirements; its attempts are not reset.
+          { title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, revision: null, previousSpec: revision.previousSpec } }
+        : { recipeId: spec.recipeId, title: spec.title, stage: 'implementation', state: { ...workflow.state, spec, attempt: 0 } },
     };
   }
 
@@ -595,11 +742,25 @@ export class Orchestrator {
     // Rework after the PO rejected a verified product, or a correction of QA's defects.
     const defects = correcting ? (state.poFeedback ?? state.verification?.defects ?? []) : [];
 
-    const changing = Boolean(state.base);
+    // A change request, or requirements the PO corrected: the existing product changes.
+    const changing = Boolean(state.base) || Boolean(state.previousSpec);
     const currentFiles =
       correcting || changing ? (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path)) : [];
-    const result = await agent.implement({ spec: state.spec, attempt, defects, currentFiles, change: changing ? { previousSpec: state.base.spec } : null });
+    const askKey = `dev:${stage.id}:${attempt}`;
+    const result = await agent.implement({
+      spec: state.spec,
+      attempt,
+      defects,
+      currentFiles,
+      change: changing ? { previousSpec: state.previousSpec ?? state.base.spec } : null,
+      canAsk: !state.asked?.[askKey],
+      teamClarifications: state.teamClarifications ?? [],
+    });
     this.#recordAiCalls(ctx, result.aiCalls);
+    if (result.status === 'questions') return this.#asked(ctx, { from: 'dev', askKey, questions: result.questions });
+    for (const d of result.disputes ?? []) {
+      say({ type: 'dev.dispute', from: agent.id, to: 'qa', status: 'warning', summary: `The Developer contests QA's test "${d.test}": ${d.reason}`, detail: d });
+    }
     const written = await this.#writeFiles(ctx, result.files);
     say({ type: correcting ? 'dev.correction' : 'dev.implementation', status: 'success', summary: result.summary, detail: { attempt, files: written } });
 
@@ -616,7 +777,7 @@ export class Orchestrator {
     const files = written.map((f) => f.path);
     return {
       output: { summary: result.summary, files, commit },
-      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt } } },
+      update: { stage: 'verification', verified: false, state: { ...state, attempt, implementation: { files, commit, attempt }, previousSpec: null, pendingDisputes: result.disputes ?? [] } },
     };
   }
 
@@ -624,8 +785,31 @@ export class Orchestrator {
     const { workflow, agent, dir, say } = ctx;
     const state = workflow.state;
     const productFiles = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path));
-    const plan = await agent.planVerification({ spec: state.spec, implementation: state.implementation, dialogue: state.dialogue ?? [], files: productFiles });
+    const askKey = `qa:verification:${state.attempt}`;
+    const plan = await agent.planVerification({
+      spec: state.spec,
+      implementation: state.implementation,
+      dialogue: state.dialogue ?? [],
+      files: productFiles,
+      canAsk: !state.asked?.[askKey],
+      teamClarifications: state.teamClarifications ?? [],
+      dir: ctx.dir,
+      disputes: state.pendingDisputes ?? [],
+    });
     this.#recordAiCalls(ctx, plan.aiCalls);
+    if (plan.status === 'questions') return this.#asked(ctx, { from: 'qa', askKey, questions: plan.questions });
+    const disputeLog = [...(state.disputeLog ?? [])];
+    for (const r of plan.disputeResponses ?? []) {
+      say({
+        type: 'qa.dispute',
+        from: agent.id,
+        to: 'dev',
+        status: r.decision === 'fixed' ? 'success' : 'warning',
+        summary: r.decision === 'fixed' ? `QA fixed its test "${r.test}" after the Developer's objection: ${r.answer}` : `QA keeps its test "${r.test}": ${r.answer}`,
+        detail: r,
+      });
+      disputeLog.push({ ...r, attempt: state.attempt });
+    }
     say({
       type: 'qa.plan',
       summary: plan.summary,
@@ -713,16 +897,16 @@ export class Orchestrator {
     }
     return {
       output: { summary: evaluation.summary, verdict: evaluation.verdict },
-      update: { stage: next, verified: false, state: { ...state, verification, poFeedback: null } },
+      update: { stage: next, verified: false, state: { ...state, verification, poFeedback: null, pendingDisputes: [], disputeLog } },
     };
   }
 
   async #review(ctx) {
     const { workflow, agent, say } = ctx;
     const state = workflow.state;
-    const files = (await this.listProductFiles(workflow.id)).files.filter((f) => f.content != null && !isQaFile(f.path));
     const rejections = state.poRejections ?? [];
-    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, files, previousRejections: rejections });
+    // The PO never receives the code: it judges by the request, the requirements and QA's evidence.
+    const review = await agent.review({ spec: state.spec, verification: state.verification ?? null, previousRejections: rejections, teamClarifications: state.teamClarifications ?? [], dialogue: state.dialogue ?? [], testDisputes: state.disputeLog ?? [] });
     this.#recordAiCalls(ctx, review.aiCalls);
     const { aiCalls: _calls, ...decision } = review;
     const qaPassed = state.verification?.verdict === 'pass';
@@ -742,6 +926,29 @@ export class Orchestrator {
         rework,
       },
     });
+
+    // The requirements are the PO's: when its review finds them wrong, the PO
+    // corrects them first. The Developer never changes the requirements.
+    const requirementsWrong = !review.accepted && (review.reasonOrigins ?? []).includes('requirements') && (state.revisions ?? 0) < MAX_REVISIONS;
+    if (requirementsWrong) {
+      const reasons = review.reasons?.length ? review.reasons : [review.summary];
+      say({
+        type: 'po.revision',
+        from: agent.id,
+        to: agent.id,
+        status: 'warning',
+        summary: `Not accepted yet: the requirements themselves are wrong, so the PO corrects them before the Developer changes the product. ${review.summary}`,
+        detail: { reasons, origins: review.reasonOrigins ?? [] },
+      });
+      return {
+        output: { summary: review.summary, accepted: false, revision: true },
+        update: {
+          stage: 'analysis',
+          verified: false,
+          state: { ...state, review: decision, revision: { reasons, previousSpec: state.spec }, revisions: (state.revisions ?? 0) + 1, poRejections: [...rejections, { attempt: state.attempt, summary: review.summary, reasons }] },
+        },
+      };
+    }
 
     if (rework) {
       const reasons = review.reasons?.length ? review.reasons : [review.summary];
@@ -792,6 +999,69 @@ export class Orchestrator {
   }
 
   // ---- execution helpers -----------------------------------------------------
+
+  /** A Developer or QA asked the PO before doing its work: the PO answers next. */
+  #asked(ctx, { from, askKey, questions }) {
+    const { workflow, stage, say } = ctx;
+    const who = from === 'dev' ? 'The Developer' : 'QA';
+    say({
+      type: 'team.question',
+      from,
+      to: 'po',
+      status: 'warning',
+      summary: `${who} asked the PO ${questions.length} question${questions.length === 1 ? '' : 's'} before ${from === 'dev' ? 'writing the code' : 'writing its tests'}.`,
+      detail: { stage: stage.id, questions },
+    });
+    return {
+      output: { summary: `Asked the PO ${questions.length} question(s).`, questions: questions.length },
+      update: {
+        stage: 'consultation',
+        state: { ...workflow.state, asked: { ...(workflow.state.asked ?? {}), [askKey]: true }, teamQuestions: { from, returnStage: stage.id, questions } },
+      },
+    };
+  }
+
+  /** The PO answers the Developer's or QA's questions, or passes them on to the user. */
+  async #consultation(ctx) {
+    const { workflow, agent, say } = ctx;
+    const state = workflow.state;
+    const pending = state.teamQuestions;
+    const asker = pending.from === 'dev' ? 'Developer' : 'QA';
+    const result = await agent.answerTeam({ spec: state.spec, from: pending.from, questions: pending.questions, dialogue: state.dialogue ?? [], teamClarifications: state.teamClarifications ?? [] });
+    this.#recordAiCalls(ctx, result.aiCalls);
+    const answered = result.answers.filter((a) => !a.askUser).map((a) => ({ from: pending.from, question: pending.questions[a.question - 1].question, answer: a.answer, answeredBy: 'po' }));
+    const escalated = result.answers.filter((a) => a.askUser).map((a) => ({ ...pending.questions[a.question - 1], poWhy: a.why }));
+    const teamClarifications = [...(state.teamClarifications ?? []), ...answered];
+    if (answered.length) {
+      say({
+        type: 'team.answer',
+        from: agent.id,
+        to: pending.from,
+        status: 'success',
+        summary: `The PO answered ${answered.length} of the ${asker}'s ${pending.questions.length} question${pending.questions.length === 1 ? '' : 's'}.`,
+        detail: { answers: answered.map(({ question, answer }) => ({ question, answer })), decidedBy: result.decidedBy ?? null },
+      });
+    }
+    if (!escalated.length) {
+      return {
+        output: { summary: `Answered all ${answered.length} question(s).`, answered: answered.length, passedOn: 0 },
+        update: { stage: pending.returnStage, state: { ...state, teamClarifications, teamQuestions: null } },
+      };
+    }
+    say({
+      type: 'po.escalation',
+      from: agent.id,
+      to: 'user',
+      status: 'warning',
+      summary: `The ${asker} asked something only you can decide. The PO passes ${escalated.length === 1 ? 'this question' : `these ${escalated.length} questions`} on to you.`,
+      detail: { for: pending.from, questions: escalated },
+    });
+    this.#event(workflow.id, { type: 'workflow.needs_clarification', category: 'workflow', status: 'warning', summary: `The ${asker} is waiting for your answer. Answer below to continue this same request.` });
+    return {
+      output: { summary: `Answered ${answered.length}, passed ${escalated.length} on to the user.`, answered: answered.length, passedOn: escalated.length },
+      update: { status: 'needs_clarification', finishedAt: now(), state: { ...state, teamClarifications, waitingFor: 'team', teamQuestions: { ...pending, escalated } } },
+    };
+  }
 
   async #writeFiles({ dir, say }, files) {
     const written = [];

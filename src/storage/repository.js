@@ -96,13 +96,23 @@ export class Repository extends EventEmitter {
     for (const id of agentIds) insert.run(id, now());
   }
 
-  /** @returns {Record<string, { enabled: boolean, mode: 'scripted' | 'ai', updatedAt: string }>} */
+  /** @returns {Record<string, { enabled: boolean, mode: 'scripted' | 'ai', model: string | null, updatedAt: string }>} */
   getAgentConfig() {
     const config = {};
     for (const row of this.db.prepare('SELECT * FROM agent_config').all()) {
-      config[row.agent_id] = { enabled: row.enabled === 1, mode: row.mode, updatedAt: row.updated_at };
+      config[row.agent_id] = { enabled: row.enabled === 1, mode: row.mode, model: row.model ?? null, updatedAt: row.updated_at };
     }
     return config;
+  }
+
+  /** The model chosen for an agent, or null for the workspace default. */
+  getAgentModel(agentId) {
+    return this.db.prepare('SELECT model FROM agent_config WHERE agent_id = ?').get(agentId)?.model ?? null;
+  }
+
+  setAgentModel(agentId, model) {
+    this.db.prepare('UPDATE agent_config SET model = ?, updated_at = ? WHERE agent_id = ?').run(model || null, now(), agentId);
+    this.emit('change', { entity: 'agent', id: agentId });
   }
 
   getAgentMode(agentId) {
@@ -394,7 +404,8 @@ export class Repository extends EventEmitter {
          WHERE workflow_id IS NOT NULL
            AND type IN ('test.results', 'handoff', 'workflow.blocked', 'workflow.resumed', 'workflow.cancelled', 'ai.call',
                         'po.clarification', 'clarification.answered', 'qa.concern', 'qa.verdict', 'defect.reported',
-                        'po.review', 'po.requirements', 'qa.ai-tests')
+                        'po.review', 'po.requirements', 'qa.ai-tests', 'team.question', 'team.answer',
+                        'po.escalation', 'team.answered', 'po.revision', 'dev.dispute', 'qa.dispute')
          ORDER BY id`,
       )
       .all()

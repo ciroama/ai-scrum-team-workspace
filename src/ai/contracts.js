@@ -22,6 +22,10 @@ export const WEB_CHECK_TYPES = {
 const ALLOWED_EXTENSIONS = ['.html', '.css', '.js', '.svg', '.md', '.json', '.txt'];
 const MAX_FILES = 8;
 const MAX_FILE_BYTES = 200_000;
+// Limits of the agreed requirements: they hold the whole product, every version adds to them.
+export const MAX_REQUIREMENTS = 40;
+export const MAX_CRITERIA = 30;
+const MAX_TEXT = 1000;
 
 class ContractError extends Error {
   constructor(problems) {
@@ -42,7 +46,7 @@ function safeRelativePath(path) {
   );
 }
 
-function validateCheck(check, problems, where) {
+export function validateCheck(check, problems, where) {
   if (!check || typeof check !== 'object') return problems.push(`${where}: "check" must be an object.`);
   switch (check.type) {
     case 'fileExists':
@@ -83,7 +87,7 @@ function validateCheck(check, problems, where) {
  * @returns {{ status: 'ready', title: string, requirements: string[], acceptanceCriteria: object[], assumptions: object[], handoffMessage: string, summary: string }
  *         | { status: 'needs_clarification', reason: string, message: string, questions: object[] }}
  */
-export function validatePoReply(reply, { firstRound = false } = {}) {
+export function validatePoReply(reply, { firstRound = false, bug = false } = {}) {
   const problems = [];
   if (reply.status === 'needs_clarification') {
     const questions = Array.isArray(reply.questions) ? reply.questions : [];
@@ -107,17 +111,28 @@ export function validatePoReply(reply, { firstRound = false } = {}) {
   }
   if (reply.status !== 'ready') throw new ContractError(['"status" must be "ready" or "needs_clarification".']);
   if (!isText(reply.title, 120)) problems.push('"title" is required (max 120 characters).');
-  if (!Array.isArray(reply.requirements) || !reply.requirements.length || reply.requirements.length > 15 || !reply.requirements.every((r) => isText(r, 500))) {
-    problems.push('"requirements" must be 1–15 non-empty strings.');
+  // A product grows with every change request and the PO returns the whole
+  // list each time, so the limits leave room for a product of many versions.
+  const reqs = reply.requirements;
+  if (!Array.isArray(reqs) || !reqs.length || reqs.length > MAX_REQUIREMENTS) {
+    problems.push(`"requirements" must be a list of 1–${MAX_REQUIREMENTS} strings${Array.isArray(reqs) ? ` (it has ${reqs.length})` : ''}.`);
+  } else {
+    reqs.forEach((r, i) => {
+      if (!isText(r, MAX_TEXT)) problems.push(`requirements[${i}] must be a non-empty string of at most ${MAX_TEXT} characters.`);
+    });
   }
   const criteria = reply.acceptanceCriteria;
-  if (!Array.isArray(criteria) || !criteria.length || criteria.length > 12) {
-    problems.push('"acceptanceCriteria" must contain 1–12 items.');
+  if (!Array.isArray(criteria) || !criteria.length || criteria.length > MAX_CRITERIA) {
+    problems.push(`"acceptanceCriteria" must contain 1–${MAX_CRITERIA} items${Array.isArray(criteria) ? ` (it has ${criteria.length})` : ''}.`);
   } else {
+    // The PO says what must be true for the user, in words. Turning a
+    // criterion into a test is QA's job, so any test the PO adds is ignored.
     criteria.forEach((c, i) => {
-      if (!isText(c?.description, 500)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
-      validateCheck(c?.check, problems, `acceptanceCriteria[${i}]`);
+      if (!isText(c?.description, MAX_TEXT)) problems.push(`acceptanceCriteria[${i}]: "description" is required.`);
     });
+  }
+  if (bug && reply.bugOrigin !== 'requirements' && reply.bugOrigin !== 'implementation') {
+    problems.push('This is a bug report: say where the bug comes from in "bugOrigin": "requirements" (the requirements missed or misstated it) or "implementation" (the requirements were right, the code is wrong).');
   }
   if (!Array.isArray(reply.assumptions)) {
     problems.push('"assumptions" is required: list every detail you rely on that the request does not state word for word, with "decidedBy": "user" or "po" (an empty list if there are none).');
@@ -138,15 +153,12 @@ export function validatePoReply(reply, { firstRound = false } = {}) {
   }
   if (problems.length) throw new ContractError(problems);
 
-  const acceptanceCriteria = criteria.map((c, i) => ({ id: `AC${i + 1}`, description: c.description.trim(), check: normaliseCheck(c.check) }));
-  // The entry page is always required; add it if the PO did not state it.
-  if (!acceptanceCriteria.some((c) => c.check.type === 'fileExists' && c.check.path === 'index.html')) {
-    acceptanceCriteria.push({
-      id: `AC${acceptanceCriteria.length + 1}`,
-      description: 'The product has an index.html entry page (added by the workspace: the preview and QA need it).',
-      check: { type: 'fileExists', path: 'index.html' },
-    });
-  }
+  const acceptanceCriteria = criteria
+    .filter((c) => !c.description.trim().startsWith(ENTRY_PAGE_CRITERION))
+    .map((c, i) => ({ id: `AC${i + 1}`, description: c.description.trim() }));
+  // The entry page is always required (the preview and QA open it): a
+  // technical rule of the workspace, so it comes with its own check.
+  acceptanceCriteria.push({ id: `AC${acceptanceCriteria.length + 1}`, description: `${ENTRY_PAGE_CRITERION} (added by the workspace: the preview and QA need it).`, check: { type: 'fileExists', path: 'index.html' } });
   return {
     status: 'ready',
     title: reply.title.trim(),
@@ -154,13 +166,16 @@ export function validatePoReply(reply, { firstRound = false } = {}) {
     acceptanceCriteria,
     assumptions: reply.assumptions.map((a) => ({ text: a.text.trim(), decidedBy: a.decidedBy })),
     whyNoQuestions: isText(reply.whyNoQuestions, 800) ? reply.whyNoQuestions.trim() : null,
+    bugOrigin: bug ? reply.bugOrigin : null,
     summary: isText(reply.summary, 500) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
     changes: Array.isArray(reply.changes) ? reply.changes.filter((c) => isText(c, 500)).map((c) => c.trim()).slice(0, 20) : null,
   };
 }
 
-function normaliseCheck(check) {
+const ENTRY_PAGE_CRITERION = 'The product has an index.html entry page';
+
+export function normaliseCheck(check) {
   const { type } = check;
   switch (type) {
     case 'fileExists':
@@ -228,7 +243,49 @@ export const ORIGINS = ['requirements', 'implementation'];
  * Validates the Developer's reply.
  * @returns {{ files: Array<{ path: string, purpose: string, content: string }>, summary: string | null, handoffMessage: string | null }}
  */
-export function validateDevReply(reply) {
+/** At most this many questions a Developer or QA may ask the PO in one round. */
+export const MAX_TEAM_QUESTIONS = 5;
+
+/**
+ * Questions a Developer or QA asks the PO instead of delivering their work.
+ * Only allowed once per piece of work: after the answers they must deliver.
+ * @returns {{ status: 'questions', questions: Array<{ question: string, why: string | null }> } | null}
+ */
+function teamQuestions(reply, canAsk, deliver) {
+  if (reply?.status !== 'questions') return null;
+  if (!canAsk) throw new ContractError([`You already asked your questions for this work and got the answers. Do not ask again: ${deliver}, and record in it what you had to assume.`]);
+  const list = reply.questions;
+  if (!Array.isArray(list) || !list.length || list.length > MAX_TEAM_QUESTIONS || !list.every((q) => isText(q?.question, 600))) {
+    throw new ContractError([`"questions" must be a list of 1–${MAX_TEAM_QUESTIONS} items {"question":"...","why":"why it matters for your work"}.`]);
+  }
+  return { status: 'questions', questions: list.map((q) => ({ question: q.question.trim(), why: isText(q.why, 600) ? q.why.trim() : null })) };
+}
+
+/**
+ * The PO's answers to a Developer's or QA's questions: an answer, or a
+ * decision to pass the question on to the user when only the user can say.
+ * @returns {{ answers: Array<{ question: number, answer: string | null, askUser: boolean, why: string | null }> }}
+ */
+export function validateTeamAnswerReply(reply, { count }) {
+  const problems = [];
+  const answers = Array.isArray(reply?.answers) ? reply.answers : [];
+  const clean = [];
+  for (let i = 1; i <= count; i++) {
+    const a = answers.find((x) => Number(x?.question) === i);
+    if (!a) problems.push(`Answer question ${i}: {"question":${i},"answer":"..."} or {"question":${i},"askUser":true,"why":"why only the user can decide"}.`);
+    else if (a.askUser === true) {
+      if (!isText(a.why, 600)) problems.push(`Question ${i}: say in "why" why only the user can decide it.`);
+      else clean.push({ question: i, answer: null, askUser: true, why: a.why.trim() });
+    } else if (!isText(a.answer, 1500)) problems.push(`Question ${i}: "answer" must be a non-empty text, or set "askUser": true.`);
+    else clean.push({ question: i, answer: a.answer.trim(), askUser: false, why: null });
+  }
+  if (problems.length) throw new ContractError(problems);
+  return { answers: clean };
+}
+
+export function validateDevReply(reply, { canAsk = false, contestable = [] } = {}) {
+  const asked = teamQuestions(reply, canAsk, 'deliver the files now');
+  if (asked) return asked;
   const problems = [];
   const files = reply.files;
   if (!Array.isArray(files) || !files.length) {
@@ -243,6 +300,7 @@ export function validateDevReply(reply) {
       if (seen.has(f.path)) problems.push(`${where}: duplicate path ${f.path}.`);
       seen.add(f.path);
       if (f.path.startsWith('test/') || f.path.startsWith('qa/')) problems.push(`${where}: the test/ and qa/ folders are reserved for QA.`);
+      if (f.path === 'REQUIREMENTS.md') problems.push(`${where}: REQUIREMENTS.md belongs to the PO; the requirements are not yours to change. If they look wrong, the PO decides.`);
       if (!ALLOWED_EXTENSIONS.some((ext) => f.path.toLowerCase().endsWith(ext))) problems.push(`${where}: only ${ALLOWED_EXTENSIONS.join(' ')} files are allowed.`);
     }
     if (typeof f?.content !== 'string') problems.push(`${where}: "content" must be a string.`);
@@ -252,8 +310,18 @@ export function validateDevReply(reply) {
     }
   });
   if (!seen.has('index.html')) problems.push('index.html is required.');
+  // A QA test the Developer believes is wrong can be contested, with the reason.
+  const disputes = reply.disputes ?? [];
+  if (!Array.isArray(disputes)) problems.push('"disputes" must be a list of {"test":"QA-AI: ...","reason":"..."}.');
+  else {
+    disputes.forEach((d, i) => {
+      if (!contestable.includes(d?.test)) problems.push(`disputes[${i}]: "test" must be the exact name of a failing QA test you received: ${contestable.join(' | ') || '(none: no QA test failed)'}.`);
+      if (!isText(d?.reason, 1000)) problems.push(`disputes[${i}]: say in "reason" why the test is wrong.`);
+    });
+  }
   if (problems.length) throw new ContractError(problems);
   return {
+    disputes: Array.isArray(disputes) ? disputes.map((d) => ({ test: d.test, reason: d.reason.trim() })) : [],
     files: files.map((f) => ({ path: f.path, purpose: isText(f.purpose, 200) ? f.purpose.trim() : 'Product file', content: f.content })),
     summary: isText(reply.summary, 800) ? reply.summary.trim() : null,
     handoffMessage: isText(reply.handoffMessage, 1000) ? reply.handoffMessage.trim() : null,
@@ -283,7 +351,9 @@ function syntaxError(source) {
  * modules and makes sure they parse.
  * @returns {{ testFile: string, tests: number, concerns: string[], summary: string | null }}
  */
-export function validateQaReply(reply) {
+export function validateQaReply(reply, { canAsk = false, criteria = [], disputes = [] } = {}) {
+  const asked = teamQuestions(reply, canAsk, 'write your tests now');
+  if (asked) return asked;
   const problems = [];
   const source = reply.testFile;
   if (typeof source !== 'string' || !source.trim()) problems.push('"testFile" (an ES module using node:test) is required.');
@@ -301,6 +371,36 @@ export function validateQaReply(reply) {
       if (error) problems.push(`The test file does not parse: ${error}`);
     }
   }
+  // The PO's criteria are in words: QA turns each one into a test, either a
+  // deterministic check or tests of its own named after the criterion.
+  const criteriaChecks = {};
+  if (reply.criteriaChecks != null && !Array.isArray(reply.criteriaChecks)) problems.push('"criteriaChecks" must be a list of {"criterion":"AC1","check":{...}}.');
+  for (const [i, item] of (Array.isArray(reply.criteriaChecks) ? reply.criteriaChecks : []).entries()) {
+    const id = String(item?.criterion ?? '');
+    if (!criteria.some((c) => c.id === id)) {
+      problems.push(`criteriaChecks[${i}]: "criterion" must be one of ${criteria.map((c) => c.id).join(', ') || '(none: every criterion already has its test)'}.`);
+      continue;
+    }
+    const before = problems.length;
+    validateCheck(item.check, problems, `criteriaChecks[${i}] (${id})`);
+    if (problems.length === before) criteriaChecks[id] = normaliseCheck(item.check);
+  }
+  if (typeof source === 'string') {
+    for (const c of criteria) {
+      const ownTests = new RegExp(`\\btest\\s*\\(\\s*(['"\`])QA-AI: ${c.id}\\b`).test(source);
+      if (!criteriaChecks[c.id] && !ownTests) {
+        problems.push(`${c.id} ("${c.description}") has no test: give it a check in "criteriaChecks", or write at least one test named "QA-AI: ${c.id} ...".`);
+      }
+    }
+  }
+  // Every test the Developer contested gets an answer: fixed, or kept with the reason.
+  const disputeResponses = [];
+  for (const [i, d] of disputes.entries()) {
+    const r = (Array.isArray(reply.disputeResponses) ? reply.disputeResponses : []).find((x) => x?.test === d.test);
+    if (!r || (r.decision !== 'fixed' && r.decision !== 'kept') || !isText(r.reason, 1000)) {
+      problems.push(`The Developer contested your test "${d.test}" (${d.reason}). Answer it in "disputeResponses": {"test":${JSON.stringify(d.test)},"decision":"fixed" | "kept","reason":"..."} (dispute ${i + 1}).`);
+    } else disputeResponses.push({ test: d.test, reason: d.reason, decision: r.decision, answer: r.reason.trim() });
+  }
   if (reply.concerns != null && (!Array.isArray(reply.concerns) || !reply.concerns.every((c) => isText(c, 600)))) problems.push('"concerns" must be a list of short texts.');
   if (reply.requestOnly != null && (!Array.isArray(reply.requestOnly) || !reply.requestOnly.every((n) => typeof n === 'string' && n.startsWith('QA-AI: ')))) {
     problems.push('"requestOnly" must list the names ("QA-AI: ...") of the tests that check something the user asked but the requirements do not state.');
@@ -308,6 +408,8 @@ export function validateQaReply(reply) {
   if (problems.length) throw new ContractError(problems);
   return {
     requestOnly: (reply.requestOnly ?? []).map((n) => n.trim()),
+    disputeResponses,
+    criteriaChecks,
     testFile: source,
     tests: (source.match(/\btest\s*\(\s*(['"`])QA-AI: /g) ?? []).length,
     concerns: (reply.concerns ?? []).map((c) => c.trim()).slice(0, 10),
